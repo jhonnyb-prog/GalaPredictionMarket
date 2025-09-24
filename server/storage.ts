@@ -60,6 +60,18 @@ export interface IStorage {
   markFeeWithdrawalCompleted(id: string, txId: string): Promise<FeeWithdrawal>;
   markFeeWithdrawalFailed(id: string, failureReason: string): Promise<FeeWithdrawal>;
   
+  // Order history
+  getMarketOrderHistory(marketId: string, limit?: number, offset?: number): Promise<{
+    id: string;
+    outcome: string;
+    shares: string;
+    price: string;
+    amount: string;
+    side: 'buy' | 'sell';
+    username: string;
+    createdAt: Date;
+  }[]>;
+  
   // Analytics
   getMarketStats(): Promise<{
     totalVolume: string;
@@ -365,6 +377,69 @@ export class DatabaseStorage implements IStorage {
       .returning();
     
     return withdrawal;
+  }
+
+  async getMarketOrderHistory(marketId: string, limit = 50, offset = 0): Promise<{
+    id: string;
+    outcome: string;
+    shares: string;
+    price: string;
+    amount: string;
+    side: 'buy' | 'sell';
+    username: string;
+    createdAt: Date;
+  }[]> {
+    // Use UNION to create proper order history entries for both buyers and sellers
+    // Proper SQL with outer SELECT and column aliasing for correct pagination
+    const query = sql`
+      SELECT * FROM (
+        (
+          SELECT 
+            ${trades.id}::text || '-buy' as id,
+            ${trades.outcome} as outcome,
+            ${trades.shares} as shares,
+            ${trades.price} as price,
+            ${trades.amount} as amount,
+            'buy' as side,
+            ${users.username} as username,
+            ${trades.createdAt} as created_at
+          FROM ${trades}
+          LEFT JOIN ${users} ON ${trades.buyerId} = ${users.id}
+          WHERE ${trades.marketId} = ${marketId} AND ${trades.buyerId} IS NOT NULL
+        )
+        UNION ALL
+        (
+          SELECT 
+            ${trades.id}::text || '-sell' as id,
+            ${trades.outcome} as outcome,
+            ${trades.shares} as shares,
+            ${trades.price} as price,
+            ${trades.amount} as amount,
+            'sell' as side,
+            ${users.username} as username,
+            ${trades.createdAt} as created_at
+          FROM ${trades}
+          LEFT JOIN ${users} ON ${trades.sellerId} = ${users.id}
+          WHERE ${trades.marketId} = ${marketId} AND ${trades.sellerId} IS NOT NULL
+        )
+      ) t 
+      ORDER BY t.created_at DESC
+      LIMIT ${limit}
+      OFFSET ${offset}
+    `;
+
+    const result = await db.execute(query);
+    
+    return result.rows.map((row: any) => ({
+      id: row.id,
+      outcome: row.outcome,
+      shares: row.shares,
+      price: row.price,
+      amount: row.amount,
+      side: row.side as 'buy' | 'sell',
+      username: row.username || 'Unknown',
+      createdAt: new Date(row.created_at)
+    }));
   }
 
   async getMarketStats(): Promise<{

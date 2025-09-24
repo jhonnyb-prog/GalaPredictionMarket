@@ -3,6 +3,7 @@ import { Link, useParams } from "wouter";
 import { Button } from "@/components/ui/button";
 import { TradingInterface } from "@/components/trading-interface";
 import { PriceChart } from "@/components/price-chart";
+import { OrderHistory } from "@/components/order-history";
 import { MarketData, OrderData } from "@/types/market";
 import { ArrowLeft } from "lucide-react";
 import { useUser } from "@/contexts/UserContext";
@@ -275,6 +276,11 @@ export default function MarketDetail() {
               )}
             </div>
           </div>
+        </div>
+
+        {/* Order History - Full Width */}
+        <div className="bg-card border border-border rounded-lg p-6">
+          <OrderHistory marketId={id!} />
         </div>
       </div>
     </main>
