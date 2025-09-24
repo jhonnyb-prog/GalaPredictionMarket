@@ -728,6 +728,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Market order history endpoint
+  app.get("/api/markets/:marketId/history", async (req, res) => {
+    try {
+      const { marketId } = req.params;
+      const { limit = "50", offset = "0" } = req.query;
+      
+      // Get order history for this market
+      const history = await storage.getMarketOrderHistory(
+        marketId, 
+        parseInt(limit as string), 
+        parseInt(offset as string)
+      );
+      
+      res.json(history);
+    } catch (error) {
+      console.error("Failed to get market history:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Analytics with integrated fee data
   app.get("/api/stats", async (req, res) => {
     try {
