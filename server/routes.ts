@@ -5,10 +5,11 @@ import { insertMarketSchema, createOrderSchema, insertUserSchema } from "@shared
 import { z } from "zod";
 import { IStorage } from "./storage";
 
-// Extend session interface to include userId
+// Extend session interface to include userId and admin flag
 declare module 'express-session' {
   interface SessionData {
     userId?: string;
+    isAdmin?: boolean;
   }
 }
 
