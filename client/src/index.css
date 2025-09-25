@@ -4,65 +4,85 @@
 @tailwind utilities;
 
 :root {
-  /* Gaming Dark Theme with Neon Accents */
-  --background: hsl(240, 21%, 8%);
+  /* Polymarket-Inspired Professional Dark Theme */
+  --background: hsl(210, 45%, 8%);
   --foreground: hsl(0, 0%, 95%);
-  --card: hsl(240, 21%, 12%);
+  --card: hsl(0, 10%, 21%);
   --card-foreground: hsl(0, 0%, 95%);
-  --popover: hsl(240, 21%, 12%);
+  --popover: hsl(0, 10%, 21%);
   --popover-foreground: hsl(0, 0%, 95%);
-  --primary: hsl(291, 100%, 55%);
-  --primary-foreground: hsl(0, 0%, 0%);
-  --secondary: hsl(180, 100%, 35%);
-  --secondary-foreground: hsl(0, 0%, 0%);
-  --muted: hsl(240, 21%, 16%);
-  --muted-foreground: hsl(240, 5%, 65%);
-  --accent: hsl(51, 100%, 55%);
-  --accent-foreground: hsl(0, 0%, 0%);
-  --destructive: hsl(0, 100%, 50%);
+  --primary: hsl(251, 67%, 44%);
+  --primary-foreground: hsl(0, 0%, 100%);
+  --secondary: hsl(236, 69%, 42%);
+  --secondary-foreground: hsl(0, 0%, 100%);
+  --muted: hsl(0, 4%, 38%);
+  --muted-foreground: hsl(0, 0%, 69%);
+  --accent: hsl(251, 67%, 44%);
+  --accent-foreground: hsl(0, 0%, 100%);
+  --destructive: hsl(0, 84%, 60%);
   --destructive-foreground: hsl(0, 0%, 100%);
-  --border: hsl(240, 21%, 20%);
-  --input: hsl(240, 21%, 16%);
-  --ring: hsl(291, 100%, 55%);
-  --chart-1: hsl(127, 100%, 55%); /* Neon Green */
-  --chart-2: hsl(291, 100%, 55%); /* Neon Purple */
-  --chart-3: hsl(180, 100%, 50%); /* Neon Cyan */
-  --chart-4: hsl(51, 100%, 55%); /* Neon Yellow */
-  --chart-5: hsl(14, 100%, 55%); /* Neon Orange */
+  --border: hsl(0, 4%, 38%);
+  --input: hsl(0, 10%, 21%);
+  --ring: hsl(251, 67%, 44%);
+  --chart-1: hsl(111, 90%, 39%); /* Success Green */
+  --chart-2: hsl(251, 67%, 44%); /* Primary Purple */
+  --chart-3: hsl(236, 69%, 42%); /* Electric Blue */
+  --chart-4: hsl(30, 100%, 50%); /* Warning Orange */
+  --chart-5: hsl(0, 84%, 60%); /* Error Red */
   --radius: 0.75rem;
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   
-  /* Gaming specific gradients */
-  --neon-gradient: linear-gradient(135deg, hsl(291, 100%, 55%), hsl(180, 100%, 50%), hsl(127, 100%, 55%));
-  --gaming-glow: 0 0 20px hsl(291, 100%, 55%, 0.3);
+  /* Professional gradients */
+  --polymarket-gradient: linear-gradient(135deg, hsl(251, 67%, 44%), hsl(236, 69%, 42%));
+  --subtle-glow: 0 2px 10px hsla(251, 67%, 44%, 0.1);
+  
+  /* Sidebar colors */
+  --sidebar-background: hsl(0, 10%, 21%);
+  --sidebar-foreground: hsl(0, 0%, 95%);
+  --sidebar-primary: hsl(251, 67%, 44%);
+  --sidebar-primary-foreground: hsl(0, 0%, 100%);
+  --sidebar-accent: hsl(251, 67%, 44%);
+  --sidebar-accent-foreground: hsl(0, 0%, 100%);
+  --sidebar-border: hsl(0, 4%, 38%);
+  --sidebar-ring: hsl(251, 67%, 44%);
 }
 
 .dark {
-  /* Same gaming theme for dark mode consistency */
-  --background: hsl(240, 21%, 8%);
+  /* Polymarket-Inspired Professional Dark Theme */
+  --background: hsl(210, 45%, 8%);
   --foreground: hsl(0, 0%, 95%);
-  --card: hsl(240, 21%, 12%);
+  --card: hsl(0, 10%, 21%);
   --card-foreground: hsl(0, 0%, 95%);
-  --popover: hsl(240, 21%, 12%);
+  --popover: hsl(0, 10%, 21%);
   --popover-foreground: hsl(0, 0%, 95%);
-  --primary: hsl(291, 100%, 55%);
-  --primary-foreground: hsl(0, 0%, 0%);
-  --secondary: hsl(180, 100%, 35%);
-  --secondary-foreground: hsl(0, 0%, 0%);
-  --muted: hsl(240, 21%, 16%);
-  --muted-foreground: hsl(240, 5%, 65%);
-  --accent: hsl(51, 100%, 55%);
-  --accent-foreground: hsl(0, 0%, 0%);
-  --destructive: hsl(0, 100%, 50%);
+  --primary: hsl(251, 67%, 44%);
+  --primary-foreground: hsl(0, 0%, 100%);
+  --secondary: hsl(236, 69%, 42%);
+  --secondary-foreground: hsl(0, 0%, 100%);
+  --muted: hsl(0, 4%, 38%);
+  --muted-foreground: hsl(0, 0%, 69%);
+  --accent: hsl(251, 67%, 44%);
+  --accent-foreground: hsl(0, 0%, 100%);
+  --destructive: hsl(0, 84%, 60%);
   --destructive-foreground: hsl(0, 0%, 100%);
-  --border: hsl(240, 21%, 20%);
-  --input: hsl(240, 21%, 16%);
-  --ring: hsl(291, 100%, 55%);
-  --chart-1: hsl(127, 100%, 55%);
-  --chart-2: hsl(291, 100%, 55%);
-  --chart-3: hsl(180, 100%, 50%);
-  --chart-4: hsl(51, 100%, 55%);
-  --chart-5: hsl(14, 100%, 55%);
+  --border: hsl(0, 4%, 38%);
+  --input: hsl(0, 10%, 21%);
+  --ring: hsl(251, 67%, 44%);
+  --chart-1: hsl(111, 90%, 39%);
+  --chart-2: hsl(251, 67%, 44%);
+  --chart-3: hsl(236, 69%, 42%);
+  --chart-4: hsl(30, 100%, 50%);
+  --chart-5: hsl(0, 84%, 60%);
+  
+  /* Sidebar colors */
+  --sidebar-background: hsl(0, 10%, 21%);
+  --sidebar-foreground: hsl(0, 0%, 95%);
+  --sidebar-primary: hsl(251, 67%, 44%);
+  --sidebar-primary-foreground: hsl(0, 0%, 100%);
+  --sidebar-accent: hsl(251, 67%, 44%);
+  --sidebar-accent-foreground: hsl(0, 0%, 100%);
+  --sidebar-border: hsl(0, 4%, 38%);
+  --sidebar-ring: hsl(251, 67%, 44%);
 }
 
 @layer base {
@@ -83,47 +103,57 @@
     }
   }
   
-  .gaming-card {
-    background: linear-gradient(135deg, hsl(240, 21%, 12%), hsl(240, 21%, 16%));
-    border: 1px solid hsl(291, 100%, 55%, 0.2);
-    box-shadow: 0 4px 20px hsl(291, 100%, 55%, 0.1);
+  .polymarket-card {
+    background: linear-gradient(135deg, hsl(0, 10%, 21%), hsl(0, 10%, 19%));
+    border: 1px solid hsl(0, 4%, 38%);
+    box-shadow: var(--subtle-glow);
     transition: all 0.3s ease;
   }
   
-  .gaming-card:hover {
-    border-color: hsl(291, 100%, 55%, 0.4);
-    box-shadow: 0 8px 30px hsl(291, 100%, 55%, 0.2);
-    transform: translateY(-2px);
+  .polymarket-card:hover {
+    border-color: hsla(251, 67%, 44%, 0.4);
+    box-shadow: 0 4px 20px hsla(251, 67%, 44%, 0.15);
+    transform: translateY(-1px);
   }
   
-  .neon-text {
-    background: var(--neon-gradient);
+  .gradient-text {
+    background: var(--polymarket-gradient);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
   
-  .glow-button {
-    box-shadow: var(--gaming-glow);
+  .professional-button {
+    box-shadow: var(--subtle-glow);
     transition: all 0.3s ease;
   }
   
-  .glow-button:hover {
-    box-shadow: 0 0 25px hsl(291, 100%, 55%, 0.5);
+  .professional-button:hover {
+    box-shadow: 0 4px 20px hsla(251, 67%, 44%, 0.2);
   }
   
   .category-crypto {
-    border-left: 4px solid hsl(51, 100%, 55%);
-    background: linear-gradient(135deg, hsl(51, 100%, 55%, 0.1), transparent);
+    border-left: 4px solid hsl(30, 100%, 50%);
+    background: linear-gradient(135deg, hsla(30, 100%, 50%, 0.08), transparent);
   }
   
   .category-politics {
-    border-left: 4px solid hsl(0, 100%, 50%);
-    background: linear-gradient(135deg, hsl(0, 100%, 50%, 0.1), transparent);
+    border-left: 4px solid hsl(0, 84%, 60%);
+    background: linear-gradient(135deg, hsla(0, 84%, 60%, 0.08), transparent);
   }
   
   .category-sports {
-    border-left: 4px solid hsl(127, 100%, 55%);
-    background: linear-gradient(135deg, hsl(127, 100%, 55%, 0.1), transparent);
+    border-left: 4px solid hsl(111, 90%, 39%);
+    background: linear-gradient(135deg, hsla(111, 90%, 39%, 0.08), transparent);
+  }
+  
+  .category-tech {
+    border-left: 4px solid hsl(236, 69%, 42%);
+    background: linear-gradient(135deg, hsla(236, 69%, 42%, 0.08), transparent);
+  }
+  
+  .category-entertainment {
+    border-left: 4px solid hsl(251, 67%, 44%);
+    background: linear-gradient(135deg, hsla(251, 67%, 44%, 0.08), transparent);
   }
 }
