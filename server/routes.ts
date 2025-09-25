@@ -39,7 +39,8 @@ function requireAuth(req: any, res: any, next: any) {
 }
 
 function requireOwnership(req: any, res: any, next: any) {
-  if (!req.session?.userId || req.session.userId !== req.params.id) {
+  const paramUserId = req.params.id || req.params.userId;
+  if (!req.session?.userId || req.session.userId !== paramUserId) {
     return res.status(403).json({ error: "Access denied - can only modify your own account" });
   }
   next();
@@ -63,19 +64,23 @@ const passwordResetRateLimit = rateLimit({
   legacyHeaders: false,
 });
 
-function requireAdmin(req: any, res: any, next: any) {
+async function requireAdmin(req: any, res: any, next: any) {
   if (!req.session?.userId) {
     return res.status(401).json({ error: "Authentication required" });
   }
   
-  // For demo/testing: Allow admin access based on session flag
-  // In production, this should check user.isAdmin from database
-  if (!req.session.isAdmin) {
-    // Check if user has admin role in session (set by role toggle)
-    return res.status(403).json({ error: "Admin access required" });
+  try {
+    // Check admin status from database, not session
+    const user = await storage.getUser(req.session.userId);
+    if (!user || !user.isAdmin) {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    
+    next();
+  } catch (error) {
+    console.error('Admin check error:', error);
+    return res.status(500).json({ error: "Internal server error" });
   }
-  
-  next();
 }
 
 // Settlement function to handle market resolution payouts
@@ -313,7 +318,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (user) {
           return res.json({ 
             user,
-            isAdmin: req.session.isAdmin === true 
+            isAdmin: user.isAdmin === true 
           });
         }
       }
@@ -341,20 +346,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Admin role toggle (for development/demo - in production use database roles)
-  app.post("/api/auth/role", requireAuth, async (req, res) => {
+  // Admin role management (admin-only endpoint)
+  app.post("/api/admin/users/:userId/role", requireAdmin, async (req, res) => {
     try {
+      const { userId } = req.params;
       const { isAdmin } = req.body;
       
-      // Set admin flag in session (for demo purposes)
-      req.session.isAdmin = isAdmin === true;
+      if (typeof isAdmin !== 'boolean') {
+        return res.status(400).json({ error: "isAdmin must be a boolean" });
+      }
+      
+      // Update user's admin status in database
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      await storage.updateUser(userId, { isAdmin });
       
       res.json({ 
-        isAdmin: req.session.isAdmin,
-        message: `Role updated to ${req.session.isAdmin ? 'admin' : 'user'}`
+        message: `User ${user.username || user.email || userId} role updated to ${isAdmin ? 'admin' : 'user'}`
       });
     } catch (error) {
-      res.status(500).json({ error: "Failed to update role" });
+      console.error('Role update error:', error);
+      res.status(500).json({ error: "Failed to update user role" });
     }
   });
 
@@ -1411,7 +1426,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // API key management endpoints for users
-  app.get("/api/users/:userId/api-keys", requireAuth, async (req, res) => {
+  app.get("/api/users/:userId/api-keys", requireAuth, requireOwnership, async (req, res) => {
     try {
       const userId = req.params.userId;
       
@@ -1427,7 +1442,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/users/:userId/api-keys", requireAuth, async (req, res) => {
+  app.post("/api/users/:userId/api-keys", requireAuth, requireOwnership, async (req, res) => {
     try {
       const userId = req.params.userId;
       
@@ -1477,7 +1492,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/users/:userId/api-keys/:keyId", requireAuth, async (req, res) => {
+  app.delete("/api/users/:userId/api-keys/:keyId", requireAuth, requireOwnership, async (req, res) => {
     try {
       const { userId, keyId } = req.params;
       
