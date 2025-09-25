@@ -15,6 +15,8 @@ import Admin from "@/pages/admin";
 import ApiDocs from "@/pages/api-docs";
 import Terms from "@/pages/terms";
 import Privacy from "@/pages/privacy";
+import Login from "@/pages/login";
+import Signup from "@/pages/signup";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 import { initGA } from "../lib/analytics";
@@ -33,6 +35,8 @@ function Router() {
       <Route path="/docs/api" component={ApiDocs} />
       <Route path="/terms" component={Terms} />
       <Route path="/privacy" component={Privacy} />
+      <Route path="/login" component={Login} />
+      <Route path="/signup" component={Signup} />
       <Route component={NotFound} />
     </Switch>
   );

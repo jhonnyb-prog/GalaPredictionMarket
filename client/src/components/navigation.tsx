@@ -3,11 +3,12 @@ import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Menu, Plus, UserCog, Wallet } from "lucide-react";
+import { Menu, Plus, UserCog, Wallet, LogOut, User, Settings } from "lucide-react";
 import { useUser } from "@/contexts/UserContext";
 import { useRole } from "@/contexts/RoleContext";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -250,6 +251,23 @@ export function Navigation() {
 
   const navItems = isAdmin ? getAdminNavItems() : getUserNavItems();
 
+  // Handle logout
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      
+      // Force page reload to clear all state
+      window.location.href = '/';
+    } catch (error) {
+      console.error('Logout error:', error);
+      // Force reload even if API fails
+      window.location.href = '/';
+    }
+  };
+
   const isActive = (path: string) => {
     if (path === "/" && location === "/") return true;
     if (path !== "/" && location.startsWith(path)) return true;
@@ -428,15 +446,66 @@ export function Navigation() {
               </Dialog>
             )}
             
+            {/* Authentication Status */}
+            {user ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="hidden sm:flex items-center space-x-2"
+                    data-testid="user-menu-trigger"
+                  >
+                    <div className="w-2 h-2 rounded-full bg-chart-1"></div>
+                    <User className="w-4 h-4" />
+                    <span className="text-sm font-medium">{user.username || user.email || 'User'}</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>My Account</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link href="/portfolio" data-testid="nav-profile">
+                      <User className="w-4 h-4 mr-2" />
+                      Profile
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem>
+                    <Settings className="w-4 h-4 mr-2" />
+                    Settings
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleLogout} data-testid="nav-logout">
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Sign Out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <div className="hidden sm:flex items-center space-x-2">
+                <Link href="/login">
+                  <Button variant="ghost" size="sm" data-testid="nav-login">
+                    Sign In
+                  </Button>
+                </Link>
+                <Link href="/signup">
+                  <Button size="sm" data-testid="nav-signup">
+                    Sign Up
+                  </Button>
+                </Link>
+              </div>
+            )}
+            
+            {/* Wallet Connection for Funding */}
             <Button
               variant="outline"
               className="hidden sm:flex items-center space-x-2"
               data-testid="wallet-connect-btn"
               id="wallet-connect-trigger"
             >
-              <div className={`w-2 h-2 rounded-full ${user ? 'bg-chart-1' : 'bg-destructive'}`}></div>
+              <div className={`w-2 h-2 rounded-full ${user ? 'bg-chart-1' : 'bg-muted'}`}></div>
+              <Wallet className="w-4 h-4" />
               <span className="text-sm font-medium">
-                {user ? `${user.username || 'Guest'}` : 'Connect GalaChain'}
+                {walletConnected ? `${userAddress.substring(0, 6)}...${userAddress.substring(38)}` : 'Connect Wallet'}
               </span>
             </Button>
             
@@ -448,6 +517,46 @@ export function Navigation() {
               </SheetTrigger>
               <SheetContent side="right">
                 <div className="flex flex-col space-y-6 mt-8">
+                  
+                  {/* Mobile Authentication */}
+                  {!user ? (
+                    <div className="bg-card border border-border rounded-lg p-4">
+                      <div className="text-sm font-medium mb-3">Get Started</div>
+                      <div className="flex flex-col space-y-2">
+                        <Link href="/login" onClick={() => setIsOpen(false)}>
+                          <Button variant="outline" className="w-full" data-testid="nav-mobile-login">
+                            Sign In
+                          </Button>
+                        </Link>
+                        <Link href="/signup" onClick={() => setIsOpen(false)}>
+                          <Button className="w-full" data-testid="nav-mobile-signup">
+                            Sign Up
+                          </Button>
+                        </Link>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-card border border-border rounded-lg p-4">
+                      <div className="flex items-center space-x-3 mb-3">
+                        <User className="w-5 h-5 text-muted-foreground" />
+                        <div>
+                          <div className="font-medium text-sm">{user.username || user.email || 'User'}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {user.email && user.emailVerified ? 'Verified Account' : 'Account'}
+                          </div>
+                        </div>
+                      </div>
+                      <Button 
+                        variant="outline" 
+                        onClick={handleLogout}
+                        className="w-full text-sm"
+                        data-testid="nav-mobile-logout"
+                      >
+                        <LogOut className="w-4 h-4 mr-2" />
+                        Sign Out
+                      </Button>
+                    </div>
+                  )}
                   {/* Role Toggle */}
                   <div className="bg-card border border-border rounded-lg p-4">
                     <div className="flex items-center justify-between space-x-3">
