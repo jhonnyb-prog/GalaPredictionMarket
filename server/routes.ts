@@ -139,34 +139,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { username } = req.body;
       
-      // Regenerate session to prevent fixation attacks
-      req.session.regenerate((err) => {
-        if (err) {
-          return res.status(500).json({ error: "Session regeneration failed" });
-        }
-        
-        // Create guest user with minimal balance for testing
-        const userData = {
-          username: username || `Guest${Date.now()}`,
-          walletAddress: `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        };
-        
-        storage.createUser(userData).then(async (user) => {
-          // Initialize with small test balance (100 USDC)
-          await storage.updateUserBalance(user.id, '100');
-          
-          // Set session after regeneration
-          req.session.userId = user.id;
-          req.session.save((saveErr) => {
-            if (saveErr) {
-              return res.status(500).json({ error: "Session save failed" });
-            }
-            res.json({ user, message: "Guest session created with test balance" });
-          });
-        }).catch(() => {
-          res.status(500).json({ error: "Failed to create guest user" });
-        });
-      });
+      // Create or get guest user
+      const userData = {
+        username: username || `Guest${Date.now()}`,
+        walletAddress: `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      };
+      
+      const user = await storage.createUser(userData);
+      
+      // Set session
+      req.session.userId = user.id;
+      
+      res.json({ user, message: "Guest session created" });
     } catch (error) {
       res.status(500).json({ error: "Failed to create guest session" });
     }
@@ -175,7 +159,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/auth/me", async (req, res) => {
     try {
       if (!req.session.userId) {
-        return res.status(401).json({ error: "Not authenticated" });
+        // Auto-create guest user if no session
+        const userData = {
+          username: `Guest${Date.now()}`,
+          walletAddress: `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        };
+        
+        const user = await storage.createUser(userData);
+        req.session.userId = user.id;
+        
+        // Ensure balance is initialized (createUser should do this, but double-check)
+        const balance = await storage.getUserBalance(user.id);
+        if (!balance) {
+          await storage.updateUserBalance(user.id, '1000');
+        }
+        
+        return res.json({ user });
       }
       
       const user = await storage.getUser(req.session.userId);
@@ -191,63 +190,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/auth/logout", async (req, res) => {
-    // Clear session data before destroying
-    req.session.userId = undefined;
-    req.session.isAdmin = undefined;
-    
     req.session.destroy((err) => {
       if (err) {
         return res.status(500).json({ error: "Failed to logout" });
       }
-      
-      // Clear the cookie on client side  
-      res.clearCookie('sessionId', { 
-        path: '/', 
-        secure: process.env.NODE_ENV === 'production',
-        httpOnly: true,
-        sameSite: 'strict'
-      });
-      
       res.json({ message: "Logged out successfully" });
     });
   });
 
-  // Admin toggle endpoint - RESTRICTED to development only  
+  // Admin toggle endpoint for demo/testing
   app.post("/api/auth/admin-toggle", requireAuth, async (req, res) => {
     try {
-      // CRITICAL SECURITY: Only allow in development mode
-      if (process.env.NODE_ENV === 'production') {
-        return res.status(403).json({ 
-          error: "Admin toggle disabled in production for security" 
-        });
-      }
-      
       const { enable } = req.body;
-      
-      // Preserve userId before regeneration
-      const prevUserId = req.session.userId;
-      
-      // Regenerate session when changing privileges (security best practice)
-      req.session.regenerate((err) => {
-        if (err) {
-          return res.status(500).json({ error: "Session regeneration failed" });
-        }
-        
-        // Restore identity and set admin flag in new session
-        req.session.userId = prevUserId;
-        req.session.isAdmin = !!enable;
-        
-        req.session.save((saveErr) => {
-          if (saveErr) {
-            return res.status(500).json({ error: "Session save failed" });
-          }
-          
-          res.json({ 
-            success: true, 
-            isAdmin: req.session.isAdmin,
-            message: `Admin access ${req.session.isAdmin ? 'enabled' : 'disabled'} (DEV MODE ONLY)`
-          });
-        });
+      req.session.isAdmin = !!enable;
+      res.json({ 
+        success: true, 
+        isAdmin: req.session.isAdmin,
+        message: `Admin access ${req.session.isAdmin ? 'enabled' : 'disabled'}` 
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to toggle admin access" });
@@ -329,40 +288,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Secure /api/me/faucet route
-  app.post("/api/me/faucet", requireAuth, async (req, res) => {
-    try {
-      const validatedData = faucetSchema.parse(req.body);
-      const userId = req.session.userId!; // Safe after requireAuth
-      
-      // Get current balance
-      const currentBalance = await storage.getUserBalance(userId);
-      if (!currentBalance) {
-        return res.status(404).json({ error: "User balance not found" });
-      }
-      
-      const current = parseFloat(currentBalance.balance);
-      const newBalance = current + validatedData.amount;
-      
-      // Set max balance (10000 USDC)
-      if (newBalance > 10000) {
-        return res.status(400).json({ error: "Maximum balance of 10,000 USDC reached. Reset your balance to continue testing." });
-      }
-      
-      const updatedBalance = await storage.updateUserBalance(userId, newBalance.toString());
-      res.json({ 
-        balance: updatedBalance,
-        message: `Added ${validatedData.amount} test USDC to your balance`
-      });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid request data", details: error.errors });
-      }
-      res.status(500).json({ error: "Failed to add test USDC" });
-    }
-  });
-
-  // Test USDC Faucet endpoints (backward compatibility)
+  // Test USDC Faucet endpoints
   app.post("/api/users/:id/faucet", requireAuth, requireOwnership, async (req, res) => {
     try {
       const validatedData = faucetSchema.parse(req.body);
@@ -395,53 +321,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Secure /api/me/withdraw route
-  app.post("/api/me/withdraw", requireAuth, async (req, res) => {
-    try {
-      const userId = req.session.userId!; // Safe after requireAuth
-      const withdrawData = z.object({
-        amount: z.string().refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) > 0, {
-          message: "Amount must be a positive number"
-        }),
-        address: z.string().min(10, "GalaChain address must be at least 10 characters")
-      }).strict().parse(req.body);
-
-      const amount = parseFloat(withdrawData.amount);
-      
-      // Get current balance
-      const currentBalance = await storage.getUserBalance(userId);
-      if (!currentBalance) {
-        return res.status(400).json({ error: "User balance not found" });
-      }
-      
-      const currentAmount = parseFloat(currentBalance.balance);
-      
-      if (amount > currentAmount) {
-        return res.status(400).json({ error: "Insufficient balance" });
-      }
-      
-      if (amount < 1) {
-        return res.status(400).json({ error: "Minimum withdrawal amount is $1 USDC" });
-      }
-
-      // Update balance (demo implementation - just reduces balance)
-      const newBalance = currentAmount - amount;
-      await storage.updateUserBalance(userId, newBalance.toString());
-      
-      res.json({ 
-        message: `Successfully withdrew $${amount.toFixed(2)} USDC to ${withdrawData.address.slice(0, 10)}...`,
-        balance: newBalance.toString(),
-        transactionId: `demo-tx-${Date.now()}` // Demo transaction ID
-      });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid withdrawal data", details: error.errors });
-      }
-      res.status(500).json({ error: "Failed to process withdrawal" });
-    }
-  });
-
-  // Withdraw (backward compatibility)
   app.post("/api/users/:id/withdraw", requireAuth, requireOwnership, async (req, res) => {
     try {
       const userId = req.params.id;
@@ -487,22 +366,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Secure /api/me/reset-balance route
-  app.post("/api/me/reset-balance", requireAuth, async (req, res) => {
-    try {
-      const userId = req.session.userId!; // Safe after requireAuth
-      const updatedBalance = await storage.updateUserBalance(userId, '1000');
-      
-      res.json({ 
-        balance: updatedBalance,
-        message: "Balance reset to 1000 test USDC" 
-      });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to reset balance" });
-    }
-  });
-
-  // Reset balance (backward compatibility)
   app.post("/api/users/:id/reset-balance", requireAuth, requireOwnership, async (req, res) => {
     try {
       const userId = req.params.id;
@@ -536,21 +399,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Secure /api/me/balance route
-  app.get("/api/me/balance", requireAuth, async (req, res) => {
-    try {
-      const userId = req.session.userId!; // Safe after requireAuth
-      const balance = await storage.getUserBalance(userId);
-      if (!balance) {
-        return res.status(404).json({ error: "User balance not found" });
-      }
-      res.json(balance);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch user balance" });
-    }
-  });
-
-  // Keep original for backward compatibility
   app.get("/api/users/:id/balance", requireAuth, requireOwnership, async (req, res) => {
     try {
       const balance = await storage.getUserBalance(req.params.id);
@@ -568,18 +416,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //   return res.status(410).json({ error: "Direct balance modification disabled. Use /faucet or /reset-balance endpoints." });
   // });
 
-  // Secure /api/me/positions route  
-  app.get("/api/me/positions", requireAuth, async (req, res) => {
-    try {
-      const userId = req.session.userId!; // Safe after requireAuth
-      const positions = await storage.getUserPositions(userId);
-      res.json(positions || []);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch user positions" });
-    }
-  });
-
-  // User positions (backward compatibility)
+  // User positions
   app.get("/api/users/:id/positions", requireAuth, requireOwnership, async (req, res) => {
     try {
       const positions = await storage.getUserPositions(req.params.id);
@@ -589,18 +426,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Secure /api/me/orders route
-  app.get("/api/me/orders", requireAuth, async (req, res) => {
-    try {
-      const userId = req.session.userId!; // Safe after requireAuth
-      const orders = await storage.getUserOrders(userId);
-      res.json(orders || []);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch user orders" });
-    }
-  });
-
-  // User orders (backward compatibility)
+  // User orders
   app.get("/api/users/:id/orders", requireAuth, requireOwnership, async (req, res) => {
     try {
       const orders = await storage.getUserOrders(req.params.id);
@@ -610,18 +436,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Secure /api/me/trades route
-  app.get("/api/me/trades", requireAuth, async (req, res) => {
-    try {
-      const userId = req.session.userId!; // Safe after requireAuth
-      const trades = await storage.getUserTrades(userId);
-      res.json(trades || []);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch user trades" });
-    }
-  });
-
-  // User trades (backward compatibility)
+  // User trades
   app.get("/api/users/:id/trades", requireAuth, requireOwnership, async (req, res) => {
     try {
       const trades = await storage.getUserTrades(req.params.id);
@@ -1112,230 +927,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // API Key Management Endpoints
-  app.post("/api/admin/apikeys", requireAdmin, async (req, res) => {
-    try {
-      const { generateApiKey, generateSigningSecret } = await import("./publicApiMiddleware");
-      
-      // Validate input using the schema
-      const validatedData = insertApiKeySchema.parse(req.body);
-      
-      // Generate secure keys
-      const keyId = generateApiKey();
-      const signingSecret = generateSigningSecret();
-      
-      // Create API key in database
-      const newApiKey = await storage.createApiKey({
-        ...validatedData,
-        id: keyId,
-        signingSecret: signingSecret,
-      });
-      
-      // Return API key details (including the signing secret for one-time display)
-      res.status(201).json({
-        success: true,
-        apiKey: {
-          id: newApiKey.id,
-          userId: newApiKey.userId,
-          label: newApiKey.label,
-          scopes: newApiKey.scopes,
-          status: newApiKey.status,
-          rateLimitTier: newApiKey.rateLimitTier,
-          expiresAt: newApiKey.expiresAt,
-          createdAt: newApiKey.createdAt,
-          signingSecret: signingSecret, // IMPORTANT: Only shown once
-        },
-        message: "API key created successfully. Please save the signing secret as it will not be shown again."
-      });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ 
-          error: "Invalid API key data", 
-          details: error.errors 
-        });
-      }
-      console.error("API key creation error:", error);
-      res.status(500).json({ error: "Failed to create API key" });
-    }
-  });
-
-  app.get("/api/admin/apikeys", requireAdmin, async (req, res) => {
-    try {
-      const { userId } = req.query;
-      
-      if (userId) {
-        // Get API keys for specific user
-        const apiKeys = await storage.getUserApiKeys(userId as string);
-        res.json({ apiKeys });
-      } else {
-        // Get all API keys (admin view) - this requires a new storage method
-        // For now, return error suggesting to use userId parameter
-        res.status(400).json({ 
-          error: "userId parameter is required",
-          message: "Use ?userId=USER_ID to get API keys for a specific user"
-        });
-      }
-    } catch (error) {
-      console.error("API key listing error:", error);
-      res.status(500).json({ error: "Failed to retrieve API keys" });
-    }
-  });
-
-  app.patch("/api/admin/apikeys/:id", requireAdmin, async (req, res) => {
-    try {
-      const keyId = req.params.id;
-      const updateData = z.object({
-        status: z.enum(['active', 'suspended', 'revoked']).optional(),
-        label: z.string().min(1).max(100).optional(),
-        rateLimitTier: z.number().int().min(1).max(10).optional(),
-        expiresAt: z.string().transform(val => val ? new Date(val) : null).optional(),
-      }).strict().parse(req.body);
-      
-      const updatedApiKey = await storage.updateApiKey(keyId, updateData);
-      
-      res.json({
-        success: true,
-        apiKey: {
-          id: updatedApiKey.id,
-          userId: updatedApiKey.userId,
-          label: updatedApiKey.label,
-          scopes: updatedApiKey.scopes,
-          status: updatedApiKey.status,
-          rateLimitTier: updatedApiKey.rateLimitTier,
-          expiresAt: updatedApiKey.expiresAt,
-          lastUsedAt: updatedApiKey.lastUsedAt,
-          createdAt: updatedApiKey.createdAt,
-          updatedAt: updatedApiKey.updatedAt,
-        }
-      });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ 
-          error: "Invalid update data", 
-          details: error.errors 
-        });
-      }
-      console.error("API key update error:", error);
-      res.status(500).json({ error: "Failed to update API key" });
-    }
-  });
-
-  app.delete("/api/admin/apikeys/:id", requireAdmin, async (req, res) => {
-    try {
-      const keyId = req.params.id;
-      await storage.deleteApiKey(keyId);
-      
-      res.json({
-        success: true,
-        message: "API key deleted successfully"
-      });
-    } catch (error) {
-      console.error("API key deletion error:", error);
-      res.status(500).json({ error: "Failed to delete API key" });
-    }
-  });
-
-  // User API Key Management (Non-Admin)
-  app.post("/api/me/apikeys", requireAuth, async (req, res) => {
-    try {
-      const { generateApiKey, generateSigningSecret } = await import("./publicApiMiddleware");
-      
-      // Use default values for user-generated API keys
-      const keyData = {
-        userId: req.session.userId,
-        label: req.body.label || `API Key ${new Date().toLocaleDateString()}`,
-        scopes: ['read', 'trade'], // Users get read and trade by default
-        rateLimitTier: 1, // Basic tier for regular users
-        expiresAt: null, // No expiration by default
-      };
-      
-      // Validate input
-      const validatedData = insertApiKeySchema.parse(keyData);
-      
-      // Generate secure keys
-      const keyId = generateApiKey();
-      const signingSecret = generateSigningSecret();
-      
-      // Create API key in database
-      const newApiKey = await storage.createApiKey({
-        ...validatedData,
-        id: keyId,
-        signingSecret: signingSecret,
-      });
-      
-      // Return API key details (including the signing secret for one-time display)
-      res.status(201).json({
-        success: true,
-        apiKey: {
-          id: newApiKey.id,
-          label: newApiKey.label,
-          scopes: newApiKey.scopes,
-          status: newApiKey.status,
-          rateLimitTier: newApiKey.rateLimitTier,
-          expiresAt: newApiKey.expiresAt,
-          createdAt: newApiKey.createdAt,
-          signingSecret: signingSecret, // IMPORTANT: Only shown once
-        },
-        message: "API key created successfully. Please save the signing secret as it will not be shown again."
-      });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ 
-          error: "Invalid API key data", 
-          details: error.errors 
-        });
-      }
-      console.error("User API key creation error:", error);
-      res.status(500).json({ error: "Failed to create API key" });
-    }
-  });
-
-  app.get("/api/me/apikeys", requireAuth, async (req, res) => {
-    try {
-      // Get API keys for current user (without signing secrets)
-      const apiKeys = await storage.getUserApiKeys(req.session.userId);
-      
-      // Remove signing secrets from response for security
-      const safeApiKeys = apiKeys.map(key => ({
-        id: key.id,
-        label: key.label,
-        scopes: key.scopes,
-        status: key.status,
-        rateLimitTier: key.rateLimitTier,
-        expiresAt: key.expiresAt,
-        lastUsedAt: key.lastUsedAt,
-        createdAt: key.createdAt,
-        updatedAt: key.updatedAt,
-      }));
-      
-      res.json({ apiKeys: safeApiKeys });
-    } catch (error) {
-      console.error("User API key listing error:", error);
-      res.status(500).json({ error: "Failed to retrieve API keys" });
-    }
-  });
-
-  app.delete("/api/me/apikeys/:id", requireAuth, async (req, res) => {
-    try {
-      const keyId = req.params.id;
-      
-      // Verify the API key belongs to the current user
-      const apiKey = await storage.getApiKey(keyId);
-      if (!apiKey || apiKey.userId !== req.session.userId) {
-        return res.status(404).json({ error: "API key not found" });
-      }
-      
-      await storage.deleteApiKey(keyId);
-      
-      res.json({
-        success: true,
-        message: "API key deleted successfully"
-      });
-    } catch (error) {
-      console.error("User API key deletion error:", error);
-      res.status(500).json({ error: "Failed to delete API key" });
-    }
-  });
 
   const httpServer = createServer(app);
   return httpServer;

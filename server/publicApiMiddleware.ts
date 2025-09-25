@@ -46,12 +46,6 @@ export function generateApiKey(): string {
   return secureRandomBytes.toString('base64').replace(/[/+=]/g, '').substring(0, 48);
 }
 
-export function generateSigningSecret(): string {
-  // Generate a cryptographically secure 64-byte signing secret for HMAC
-  const secureRandomBytes = randomBytes(64);
-  return secureRandomBytes.toString('hex');
-}
-
 /**
  * Middleware to authenticate API key from X-API-Key header
  */
