@@ -1560,135 +1560,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // SECURE cryptocurrency deposit endpoint with blockchain verification
+  // Simple transaction hash storage endpoint - verification handled by background service
   app.post("/api/deposits/pending", requireAuth, csrfProtection, async (req, res) => {
     try {
       if (!req.session.userId) {
         return res.status(401).json({ error: "Authentication required" });
       }
 
-      // Server configuration (NEVER trust client for security-critical data)
-      const recipientAddress = process.env.ONRAMP_WALLET_ETH;
-      const allowedTokens = {
-        'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-        'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7'
-      } as const;
-
-      if (!recipientAddress) {
-        return res.status(500).json({ error: "Deposit configuration not available" });
-      }
-
-      // Strict validation with Zod (security-first approach)
+      // Simple validation - just store the transaction hash
       const depositSchema = z.object({
         transactionHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "Invalid transaction hash"),
         tokenType: z.enum(['USDC', 'USDT'], { required_error: "Invalid token type" }),
-        amount: z.string().regex(/^\d+(\.\d+)?$/, "Invalid amount format"),
-        chainId: z.number().refine(val => val === 1, "Only Ethereum mainnet allowed")
+        amount: z.string().regex(/^\d+(\.\d+)?$/, "Invalid amount format")
       });
 
       const validatedData = depositSchema.parse(req.body);
 
-      // Prevent replay attacks - check for duplicate transaction
+      // Check for duplicate transaction hash
       const existingDeposit = await storage.getDepositByTransactionHash(validatedData.transactionHash);
       if (existingDeposit) {
-        return res.status(409).json({ error: "Transaction already processed" });
+        return res.status(409).json({ error: "Transaction already submitted" });
       }
 
-      // CRITICAL SECURITY: Verify transaction on blockchain (don't trust client)
-      const provider = getEthereumProvider();
-      
-      try {
-        const receipt = await provider.getTransactionReceipt(validatedData.transactionHash);
-        
-        if (!receipt) {
-          return res.status(400).json({ error: "Transaction not found on blockchain" });
-        }
+      // Simply store the pending deposit - background service will verify and credit
+      const deposit = await storage.createDeposit({
+        userId: req.session.userId,
+        transactionHash: validatedData.transactionHash,
+        walletAddress: process.env.ONRAMP_WALLET_ETH || '',
+        tokenContract: validatedData.tokenType === 'USDC' 
+          ? '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' 
+          : '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+        fromAddress: '', // Will be filled by background service
+        tokenType: validatedData.tokenType,
+        amount: validatedData.amount,
+        chainId: 1
+      });
 
-        if (receipt.status !== 1) {
-          return res.status(400).json({ error: "Transaction failed on blockchain" });
-        }
-
-        // CRITICAL: Verify Ethereum mainnet using provider network (receipt.chainId doesn't exist in ethers v5)
-        const network = await provider.getNetwork();
-        if (network.chainId !== 1) {
-          return res.status(400).json({ error: "Invalid chain - Ethereum mainnet required" });
-        }
-
-        // Decode ERC-20 Transfer events for verification
-        const expectedTokenAddress = allowedTokens[validatedData.tokenType];
-        const transferTopic = ethers.utils.id("Transfer(address,address,uint256)");
-        
-        const transferLog = receipt.logs.find(log => 
-          log.address.toLowerCase() === expectedTokenAddress.toLowerCase() &&
-          log.topics[0] === transferTopic
-        );
-
-        if (!transferLog) {
-          return res.status(400).json({ error: "Valid token transfer not found" });
-        }
-
-        // Decode and verify transfer details
-        const decodedLog = ethers.utils.defaultAbiCoder.decode(['uint256'], transferLog.data);
-        const transferAmount = decodedLog[0];
-        
-        // Verify recipient is our wallet
-        const transferTo = ethers.utils.getAddress('0x' + transferLog.topics[2].slice(26));
-        if (transferTo.toLowerCase() !== recipientAddress.toLowerCase()) {
-          return res.status(400).json({ error: "Transfer not sent to correct wallet" });
-        }
-
-        // CRITICAL: Verify blockchain amount matches client claim and meets minimum
-        const decimals = 6; // Both USDC and USDT use 6 decimals
-        const expectedAmount = ethers.utils.parseUnits(validatedData.amount, decimals);
-        
-        // Exact match required - prevent under/over-crediting attacks
-        if (!transferAmount.eq(expectedAmount)) {
-          return res.status(400).json({ 
-            error: "Transfer amount mismatch", 
-            details: `Expected: ${ethers.utils.formatUnits(expectedAmount, decimals)}, Got: ${ethers.utils.formatUnits(transferAmount, decimals)}` 
-          });
-        }
-
-        // Server-enforced minimum amount check
-        const minAmount = ethers.utils.parseUnits('1', decimals);
-        if (transferAmount.lt(minAmount)) {
-          return res.status(400).json({ error: "Amount below minimum deposit of 1 USDC/USDT" });
-        }
-
-        // Extract sender address from blockchain
-        const fromAddress = ethers.utils.getAddress('0x' + transferLog.topics[1].slice(26));
-
-        // Create VERIFIED deposit record (all data from blockchain)
-        const deposit = await storage.createDeposit({
-          userId: req.session.userId,
-          transactionHash: validatedData.transactionHash,
-          walletAddress: recipientAddress, // Server-verified
-          tokenContract: expectedTokenAddress, // Server-validated
-          fromAddress: fromAddress, // Blockchain-verified
-          tokenType: validatedData.tokenType,
-          amount: validatedData.amount,
-          userMessage: '', // Not needed for identification
-          status: 'pending',
-          chainId: 1, // Server-enforced mainnet
-          blockNumber: receipt.blockNumber,
-          confirmations: receipt.confirmations || 0
-        });
-
-        res.status(201).json(deposit);
-        
-      } catch (blockchainError: any) {
-        console.error('Blockchain verification error:', blockchainError);
-        return res.status(400).json({ 
-          error: "Transaction verification failed", 
-          details: blockchainError.message 
-        });
-      }
-
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid request data", details: error.errors });
-      }
+      res.status(201).json({ 
+        message: "Deposit submitted for processing",
+        depositId: deposit.id,
+        transactionHash: validatedData.transactionHash
+      });
+    } catch (error: any) {
       console.error('Deposit creation error:', error);
+      if (error.name === 'ZodError') {
+        const issues = error.issues.map((issue: any) => `${issue.path.join('.')}: ${issue.message}`).join(', ');
+        return res.status(400).json({ error: `Validation error: ${issues}` });
+      }
       res.status(500).json({ error: "Failed to process deposit" });
     }
   });
