@@ -436,68 +436,46 @@ export function Navigation() {
               </Dialog>
             )}
             
-            {/* User Status (Wallet-based) */}
-            {user ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="hidden sm:flex items-center space-x-2"
-                    data-testid="user-menu-trigger"
-                  >
-                    <div className="w-2 h-2 rounded-full bg-chart-1"></div>
-                    <User className="w-4 h-4" />
-                    <span className="text-sm font-medium">{user.username || 'Trader'}</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuLabel>Wallet Connected</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem asChild>
-                    <Link href="/portfolio" data-testid="nav-profile">
-                      <User className="w-4 h-4 mr-2" />
-                      Portfolio
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link href="/admin" data-testid="nav-admin">
-                      <User className="w-4 h-4 mr-2" />
-                      Admin Panel
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleLogout} data-testid="nav-logout">
-                    <LogOut className="w-4 h-4 mr-2" />
-                    Disconnect Wallet
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              <div className="hidden sm:flex items-center space-x-2">
+            {/* Authentication Status */}
+            <div className="hidden sm:flex items-center space-x-2">
+              {user ? (
                 <Button 
                   variant="outline" 
                   size="sm"
-                  data-testid="nav-login"
+                  data-testid="nav-logout"
                   className="text-sm font-medium"
-                  asChild
+                  onClick={handleLogout}
                 >
-                  <Link href="/login">
-                    Login
-                  </Link>
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Logout
                 </Button>
-                <Button 
-                  variant="default" 
-                  size="sm"
-                  data-testid="nav-signup"
-                  className="text-sm font-medium bg-accent hover:bg-accent/90 text-accent-foreground"
-                  asChild
-                >
-                  <Link href="/signup">
-                    Sign Up
-                  </Link>
-                </Button>
-              </div>
-            )}
+              ) : (
+                <>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    data-testid="nav-login"
+                    className="text-sm font-medium"
+                    asChild
+                  >
+                    <Link href="/login">
+                      Login
+                    </Link>
+                  </Button>
+                  <Button 
+                    variant="default" 
+                    size="sm"
+                    data-testid="nav-signup"
+                    className="text-sm font-medium bg-accent hover:bg-accent/90 text-accent-foreground"
+                    asChild
+                  >
+                    <Link href="/signup">
+                      Sign Up
+                    </Link>
+                  </Button>
+                </>
+              )}
+            </div>
             
             {/* Wallet Connection for Funding */}
             <Button
