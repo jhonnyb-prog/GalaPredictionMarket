@@ -19,7 +19,7 @@ import { z } from "zod";
 import { IStorage } from "./storage";
 import { auth, requiresAuth } from 'express-openid-connect';
 import publicApiRouter from "./publicApi";
-import { ethers } from "ethers";
+import * as ethers from "ethers";
 import cors from "cors";
 import { notificationService } from "./notifications";
 

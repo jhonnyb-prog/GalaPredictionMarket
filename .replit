@@ -16,7 +16,15 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
+<<<<<<< HEAD
 localPort = 38481
+=======
+localPort = 33633
+externalPort = 3002
+
+[[ports]]
+localPort = 39789
+>>>>>>> f466f1c (Update Ethereum library import method)
 externalPort = 3000
 
 [[ports]]
