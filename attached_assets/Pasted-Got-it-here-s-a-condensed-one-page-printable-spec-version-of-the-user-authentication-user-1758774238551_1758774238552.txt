@@ -1,0 +1,105 @@
+Got it ✅ — here’s a **condensed, one-page printable spec** version of the user authentication & user management system. It’s reformatted into a **single-page outline** (fits nicely in Replit preview, Markdown, or PDF).
+
+---
+
+# User Authentication & Management Spec (1-Page)
+
+## Perspective 1: User
+
+* **Signup**
+
+  * Register with email + password.
+  * Receive verification email (`expires 24h`).
+  * Verified users get a unique `user_id (UUID)`.
+
+* **Login**
+
+  * Email + password check.
+  * If banned → see restriction message, no session created.
+
+* **Password Recovery**
+
+  * Request reset link (`expires 1h`).
+  * Submit new password → sessions invalidated.
+
+* **Account Deletion**
+
+  * Soft delete (status=`deleted`, recoverable for 30d).
+  * Hard delete (permanent, requires confirmation).
+
+* **Dashboard**
+
+  * View profile: email, created_at, last_login.
+  * Recent activities (logins, resets, changes).
+  * Security (2FA status, active sessions).
+  * Download/export personal data (JSON).
+
+---
+
+## Perspective 2: Admin
+
+* **Dashboard (Private)**
+
+  * Metrics: total users, active, banned, deleted.
+  * Search users by `user_id` or `email`.
+
+* **User Controls**
+
+  * Add user (optional, with email verify).
+  * Ban / Unban (set reason, optional expiry).
+  * Delete user (soft or hard).
+  * Export user data.
+
+* **Audit**
+
+  * Every action logged (who, what, when, why).
+  * Log retention ≥1y.
+
+---
+
+## Data Model (simplified)
+
+```yaml
+User: {id, email, password_hash, email_verified, status[active|banned|deleted], created_at, last_login}
+AuthToken: {id, user_id, type[session|pw_reset|verify], expires_at}
+ActivityLog: {id, user_id, actor_id, action, details, created_at}
+```
+
+---
+
+## Endpoints (Core)
+
+* `/api/auth/signup` → register + email verify
+* `/api/auth/login` → login / ban message
+* `/api/auth/password-reset/request` + `/confirm`
+* `/api/user/delete` → soft/hard delete
+* `/api/user/me/dashboard` → user history
+* `/api/admin/stats` → totals
+* `/api/admin/users?query=` → search
+* `/api/admin/users/{id}/ban|unban|delete|export`
+
+---
+
+## Security Defaults
+
+* Password hashing: **Argon2id** (or bcrypt).
+* Email tokens: random, single-use.
+* Sessions: short-lived (15m) + refresh (7–30d).
+* Rate limits: logins, signups, resets.
+* Admin accounts: 2FA required.
+* GDPR: export + right-to-delete supported.
+
+---
+
+## Example Messages
+
+* **Signup**: “Check your email to verify your account.”
+* **Login (banned)**: “Your account has been restricted. Contact support.”
+* **Password Reset**: “If your email exists, you’ll receive a reset link.”
+* **Delete**: “Data will be removed after 30 days. Type DELETE to confirm.”
+
+---
+
+✅ Fits on one page — easy to print or drop into Replit as a README/spec.
+
+Do you want me to **format this directly into a Replit-ready Markdown file** (so you can copy-paste into `README.md`), or a **PDF export** that you can download?

@@ -15,11 +15,18 @@ export const apiKeyStatusEnum = pgEnum('api_key_status', ['active', 'suspended',
 export const apiKeyScopeEnum = pgEnum('api_key_scope', ['read', 'trade', 'admin']);
 export const depositStatusEnum = pgEnum('deposit_status', ['pending', 'confirmed', 'failed']);
 export const tokenTypeEnum = pgEnum('token_type', ['USDC', 'USDT']);
+export const userStatusEnum = pgEnum('user_status', ['active', 'banned', 'deleted']);
+export const authTokenTypeEnum = pgEnum('auth_token_type', ['email_verification', 'password_reset', 'session']);
 
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   walletAddress: text("wallet_address").unique(),
   username: text("username").unique(),
+  email: text("email").unique(),
+  passwordHash: text("password_hash"),
+  emailVerified: boolean("email_verified").default(false),
+  status: userStatusEnum("status").default('active'),
+  lastLogin: timestamp("last_login"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -146,6 +153,28 @@ export const apiKeyNonces = pgTable("api_key_nonces", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Authentication and activity tracking tables
+export const authTokens = pgTable("auth_tokens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  token: text("token").unique().notNull(),
+  type: authTokenTypeEnum("type").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  used: boolean("used").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const activityLogs = pgTable("activity_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
+  actorId: varchar("actor_id").references(() => users.id), // Admin who performed the action
+  action: text("action").notNull(),
+  details: text("details"), // JSON string with additional details
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Table for tracking cryptocurrency deposits from on-ramp wallet
 export const deposits = pgTable("deposits", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -178,6 +207,9 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   trades: many(trades),
   balance: one(userBalances),
   deposits: many(deposits),
+  authTokens: many(authTokens),
+  activityLogs: many(activityLogs, { relationName: 'userActivities' }),
+  adminActions: many(activityLogs, { relationName: 'adminActions' }),
 }));
 
 export const marketsRelations = relations(markets, ({ many }) => ({
@@ -230,10 +262,67 @@ export const depositsRelations = relations(deposits, ({ one }) => ({
   user: one(users, { fields: [deposits.userId], references: [users.id] }),
 }));
 
+export const authTokensRelations = relations(authTokens, ({ one }) => ({
+  user: one(users, { fields: [authTokens.userId], references: [users.id] }),
+}));
+
+export const activityLogsRelations = relations(activityLogs, ({ one }) => ({
+  user: one(users, { fields: [activityLogs.userId], references: [users.id] }),
+  actor: one(users, { fields: [activityLogs.actorId], references: [users.id] }),
+}));
+
 // Schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
+  lastLogin: true,
+}).extend({
+  username: z.string().min(3, "Username must be at least 3 characters").max(20, "Username too long").regex(/^[a-zA-Z0-9_]+$/, "Username can only contain letters, numbers, and underscores").optional(),
+  email: z.string().email("Invalid email format").optional(),
+  passwordHash: z.string().optional(),
+});
+
+// Email authentication schemas
+export const insertAuthTokenSchema = createInsertSchema(authTokens).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertActivityLogSchema = createInsertSchema(activityLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
+// User registration schema for email auth
+export const userRegistrationSchema = z.object({
+  email: z.string().email("Invalid email format"),
+  password: z.string().min(8, "Password must be at least 8 characters")
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, "Password must contain at least one lowercase letter, one uppercase letter, and one number"),
+  username: z.string().min(3, "Username must be at least 3 characters").max(20, "Username too long").regex(/^[a-zA-Z0-9_]+$/, "Username can only contain letters, numbers, and underscores").optional(),
+});
+
+// User login schema
+export const userLoginSchema = z.object({
+  email: z.string().email("Invalid email format"),
+  password: z.string().min(1, "Password is required"),
+});
+
+// Password reset schemas
+export const passwordResetRequestSchema = z.object({
+  email: z.string().email("Invalid email format"),
+});
+
+export const passwordResetConfirmSchema = z.object({
+  token: z.string().min(1, "Token is required"),
+  password: z.string().min(8, "Password must be at least 8 characters")
+    .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, "Password must contain at least one lowercase letter, one uppercase letter, and one number"),
+});
+
+// Admin user management schemas  
+export const adminUserActionSchema = z.object({
+  userId: z.string().uuid("Invalid user ID"),
+  reason: z.string().optional(),
+  expiresAt: z.string().transform((val) => val ? new Date(val) : null).optional(),
 });
 
 export const insertMarketSchema = createInsertSchema(markets).omit({
@@ -346,6 +435,19 @@ export const insertDepositSchema = createInsertSchema(deposits).omit({
 
 export type InsertDeposit = z.infer<typeof insertDepositSchema>;
 export type InsertApiKeyNonce = typeof apiKeyNonces.$inferInsert;
+
+// Authentication types
+export type AuthToken = typeof authTokens.$inferSelect;
+export type InsertAuthToken = z.infer<typeof insertAuthTokenSchema>;
+
+export type ActivityLog = typeof activityLogs.$inferSelect;  
+export type InsertActivityLog = z.infer<typeof insertActivityLogSchema>;
+
+export type UserRegistration = z.infer<typeof userRegistrationSchema>;
+export type UserLogin = z.infer<typeof userLoginSchema>;
+export type PasswordResetRequest = z.infer<typeof passwordResetRequestSchema>;
+export type PasswordResetConfirm = z.infer<typeof passwordResetConfirmSchema>;
+export type AdminUserAction = z.infer<typeof adminUserActionSchema>;
 
 // Deposit configuration types for secure server-client communication
 export interface DepositConfig {
