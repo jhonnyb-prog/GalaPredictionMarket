@@ -487,6 +487,12 @@ export function Navigation() {
                       Portfolio
                     </Link>
                   </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link href="/admin" data-testid="nav-admin">
+                      <User className="w-4 h-4 mr-2" />
+                      Admin Panel
+                    </Link>
+                  </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleLogout} data-testid="nav-logout">
                     <LogOut className="w-4 h-4 mr-2" />
@@ -495,8 +501,27 @@ export function Navigation() {
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <div className="hidden sm:flex items-center space-x-2 text-sm text-muted-foreground">
-                Connect wallet to start trading →
+              <div className="hidden sm:flex items-center space-x-2">
+                <Button 
+                  onClick={async () => {
+                    // Demo wallet connection for easy access
+                    const response = await fetch('/api/auth/wallet-connect', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify({ walletAddress: `0x${Date.now().toString(16).padStart(40, '0')}` })
+                    });
+                    if (response.ok) {
+                      queryClient.invalidateQueries({ queryKey: ['/api/auth/me'] });
+                      toast({ title: "Demo Account Created", description: "You can now access the admin panel" });
+                    }
+                  }}
+                  variant="outline" 
+                  size="sm"
+                  data-testid="demo-connect"
+                >
+                  Quick Demo Login
+                </Button>
               </div>
             )}
             

@@ -237,8 +237,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // Apply CSRF protection to all other state-changing routes
-  app.use(csrfProtection);
+  // Apply CSRF protection to all other state-changing routes (except auth endpoints)
+  app.use((req, res, next) => {
+    // Skip CSRF for auth endpoints that need to work from browser
+    const skipCsrfPaths = [
+      '/api/auth/wallet-connect',
+      '/api/auth/role',
+      '/api/auth/logout'
+    ];
+    
+    if (skipCsrfPaths.includes(req.path)) {
+      return next();
+    }
+    
+    return csrfProtection(req, res, next);
+  });
   
   // Mount public API router for bots and market makers
   app.use('/public/v1', publicApiRouter);
