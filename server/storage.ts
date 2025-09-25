@@ -1,5 +1,5 @@
 import { 
-  users, markets, positions, orders, trades, userBalances, collectedFees, feeWithdrawals, apiKeys, apiKeyNonces, deposits,
+  users, markets, positions, orders, trades, userBalances, collectedFees, feeWithdrawals, apiKeys, apiKeyNonces, deposits, authTokens, activityLogs,
   type User, type InsertUser,
   type Market, type InsertMarket,
   type Position, type InsertPosition,
@@ -13,7 +13,11 @@ import {
   type InsertApiKey,
   type ApiKeyNonce,
   type Deposit,
-  type InsertDeposit
+  type InsertDeposit,
+  type AuthToken,
+  type InsertAuthToken,
+  type ActivityLog,
+  type InsertActivityLog
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -22,10 +26,15 @@ export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
   getUserByWalletAddress(walletAddress: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   getAllUsers(): Promise<User[]>;
   getAllUsersWithBalances(): Promise<(User & { balance?: string })[]>;
   updateUser(userId: string, userData: Partial<User>): Promise<User>;
+  updateUserPassword(userId: string, passwordHash: string): Promise<User>;
+  updateUserEmailVerification(userId: string, verified: boolean): Promise<User>;
+  updateUserLastLogin(userId: string): Promise<User>;
+  updateUserStatus(userId: string, status: 'active' | 'banned' | 'deleted', reason?: string): Promise<User>;
   
   // Markets
   getAllMarkets(): Promise<Market[]>;
@@ -106,6 +115,23 @@ export interface IStorage {
   updateDeposit(id: string, updateData: Partial<Deposit>): Promise<Deposit>;
   getDepositByTransactionHash(txHash: string): Promise<Deposit | undefined>;
   getPendingDeposits(): Promise<Deposit[]>;
+  
+  // Authentication tokens
+  createAuthToken(token: InsertAuthToken): Promise<AuthToken>;
+  getAuthToken(token: string): Promise<AuthToken | undefined>;
+  getAuthTokenById(id: string): Promise<AuthToken | undefined>;
+  markAuthTokenUsed(id: string): Promise<AuthToken>;
+  deleteAuthToken(id: string): Promise<void>;
+  cleanupExpiredTokens(): Promise<void>;
+  
+  // Activity logging
+  createActivityLog(log: InsertActivityLog): Promise<ActivityLog>;
+  getUserActivityLogs(userId: string, limit?: number): Promise<ActivityLog[]>;
+  getActivityLogs(limit?: number): Promise<ActivityLog[]>;
+  
+  // User search and management
+  searchUsers(query: string, limit?: number): Promise<User[]>;
+  getUserStats(): Promise<{ total: number, active: number, banned: number, deleted: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -116,6 +142,11 @@ export class DatabaseStorage implements IStorage {
 
   async getUserByWalletAddress(walletAddress: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.walletAddress, walletAddress));
+    return user || undefined;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
     return user || undefined;
   }
 
@@ -158,6 +189,52 @@ export class DatabaseStorage implements IStorage {
       .set(userData as any)
       .where(eq(users.id, userId))
       .returning();
+    return user;
+  }
+
+  async updateUserPassword(userId: string, passwordHash: string): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ passwordHash })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async updateUserEmailVerification(userId: string, verified: boolean): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ emailVerified: verified })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async updateUserLastLogin(userId: string): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ lastLogin: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async updateUserStatus(userId: string, status: 'active' | 'banned' | 'deleted', reason?: string): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({ status })
+      .where(eq(users.id, userId))
+      .returning();
+    
+    // Log the status change activity
+    if (reason) {
+      await this.createActivityLog({
+        userId,
+        action: `user_status_changed`,
+        details: JSON.stringify({ status, reason }),
+      });
+    }
+    
     return user;
   }
 
@@ -595,6 +672,104 @@ export class DatabaseStorage implements IStorage {
     // Clean up nonces older than 1 hour (prevent table from growing indefinitely)
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
     await db.delete(apiKeyNonces).where(sql`${apiKeyNonces.createdAt} < ${oneHourAgo}`);
+  }
+
+  // Authentication token management
+  async createAuthToken(token: InsertAuthToken): Promise<AuthToken> {
+    const [authToken] = await db.insert(authTokens).values(token).returning();
+    return authToken;
+  }
+
+  async getAuthToken(token: string): Promise<AuthToken | undefined> {
+    const [authToken] = await db
+      .select()
+      .from(authTokens)
+      .where(and(
+        eq(authTokens.token, token),
+        eq(authTokens.used, false),
+        sql`${authTokens.expiresAt} > NOW()`
+      ));
+    return authToken || undefined;
+  }
+
+  async getAuthTokenById(id: string): Promise<AuthToken | undefined> {
+    const [authToken] = await db.select().from(authTokens).where(eq(authTokens.id, id));
+    return authToken || undefined;
+  }
+
+  async markAuthTokenUsed(id: string): Promise<AuthToken> {
+    const [authToken] = await db
+      .update(authTokens)
+      .set({ used: true })
+      .where(eq(authTokens.id, id))
+      .returning();
+    return authToken;
+  }
+
+  async deleteAuthToken(id: string): Promise<void> {
+    await db.delete(authTokens).where(eq(authTokens.id, id));
+  }
+
+  async cleanupExpiredTokens(): Promise<void> {
+    await db.delete(authTokens).where(sql`${authTokens.expiresAt} < NOW()`);
+  }
+
+  // Activity logging
+  async createActivityLog(log: InsertActivityLog): Promise<ActivityLog> {
+    const [activityLog] = await db.insert(activityLogs).values(log).returning();
+    return activityLog;
+  }
+
+  async getUserActivityLogs(userId: string, limit: number = 50): Promise<ActivityLog[]> {
+    return await db
+      .select()
+      .from(activityLogs)
+      .where(eq(activityLogs.userId, userId))
+      .orderBy(desc(activityLogs.createdAt))
+      .limit(limit);
+  }
+
+  async getActivityLogs(limit: number = 100): Promise<ActivityLog[]> {
+    return await db
+      .select()
+      .from(activityLogs)
+      .orderBy(desc(activityLogs.createdAt))
+      .limit(limit);
+  }
+
+  // User search and management
+  async searchUsers(query: string, limit: number = 20): Promise<User[]> {
+    return await db
+      .select()
+      .from(users)
+      .where(sql`
+        LOWER(${users.username}) LIKE LOWER(${`%${query}%`}) OR 
+        LOWER(${users.email}) LIKE LOWER(${`%${query}%`}) OR
+        ${users.id} = ${query}
+      `)
+      .orderBy(desc(users.createdAt))
+      .limit(limit);
+  }
+
+  async getUserStats(): Promise<{ total: number, active: number, banned: number, deleted: number }> {
+    const result = await db
+      .select({
+        status: users.status,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(users)
+      .groupBy(users.status);
+
+    const stats = { total: 0, active: 0, banned: 0, deleted: 0 };
+    
+    for (const row of result) {
+      stats.total += row.count;
+      if (row.status === 'active') stats.active = row.count;
+      else if (row.status === 'banned') stats.banned = row.count;
+      else if (row.status === 'deleted') stats.deleted = row.count;
+    }
+
+    return stats;
   }
 
   // Deposit management implementation

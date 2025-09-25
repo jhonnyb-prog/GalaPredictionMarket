@@ -1,7 +1,20 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertMarketSchema, createOrderSchema, insertUserSchema, type DepositConfig } from "@shared/schema";
+import { 
+  insertMarketSchema, 
+  createOrderSchema, 
+  insertUserSchema, 
+  userRegistrationSchema,
+  userLoginSchema,
+  passwordResetRequestSchema,
+  passwordResetConfirmSchema,
+  type DepositConfig 
+} from "@shared/schema";
+import bcrypt from 'bcrypt';
+import nodemailer from 'nodemailer';
+import { randomBytes } from 'node:crypto';
+import rateLimit from 'express-rate-limit';
 import { z } from "zod";
 import { IStorage } from "./storage";
 import publicApiRouter from "./publicApi";
@@ -32,6 +45,23 @@ function requireOwnership(req: any, res: any, next: any) {
 }
 
 // Admin middleware with proper authorization
+// Rate limiting for authentication endpoints
+const authRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts per window
+  message: { error: "Too many authentication attempts, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const passwordResetRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3, // 3 password reset attempts per hour
+  message: { error: "Too many password reset attempts, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 function requireAdmin(req: any, res: any, next: any) {
   if (!req.session?.userId) {
     return res.status(401).json({ error: "Authentication required" });
@@ -56,8 +86,18 @@ function csrfProtection(req: any, res: any, next: any) {
   const origin = req.get('Origin');
   const host = req.get('Host');
   
-  if (!origin || !host || !origin.endsWith(host)) {
-    return res.status(403).json({ error: "CSRF protection: Invalid origin" });
+  if (!origin || !host) {
+    return res.status(403).json({ error: "CSRF protection: Missing origin or host header" });
+  }
+  
+  // SECURITY FIX: Use exact host matching instead of endsWith to prevent subdomain attacks
+  try {
+    const originHost = new URL(origin).host;
+    if (originHost !== host) {
+      return res.status(403).json({ error: "CSRF protection: Invalid origin" });
+    }
+  } catch (error) {
+    return res.status(403).json({ error: "CSRF protection: Invalid origin URL" });
   }
   
   next();
@@ -226,18 +266,326 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  // Admin toggle endpoint for demo/testing
+  // DISABLED: Admin toggle endpoint - SECURITY RISK
+  // This endpoint was allowing privilege escalation - any user could become admin
+  // In production, admin access should be granted server-side based on database roles
   app.post("/api/auth/admin-toggle", requireAuth, async (req, res) => {
-    try {
-      const { enable } = req.body;
-      req.session.isAdmin = !!enable;
-      res.json({ 
-        success: true, 
-        isAdmin: req.session.isAdmin,
-        message: `Admin access ${req.session.isAdmin ? 'enabled' : 'disabled'}` 
+    return res.status(403).json({ 
+      error: "Admin access modification disabled for security. Contact system administrator." 
+    });
+  });
+
+  // Email/Password Authentication Endpoints
+
+  // Email service configuration
+  const createEmailTransporter = () => {
+    if (process.env.NODE_ENV === 'production') {
+      // Production email configuration (placeholder)
+      return nodemailer.createTransport({
+        service: 'gmail', // or your email service
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS,
+        },
       });
+    } else {
+      // Development: create test account or use console logging
+      return {
+        async sendMail(mailOptions: any) {
+          console.log('📧 Email would be sent:', {
+            to: mailOptions.to,
+            subject: mailOptions.subject,
+            html: mailOptions.html,
+          });
+          return { messageId: 'dev-test-id' };
+        }
+      };
+    }
+  };
+
+  const sendVerificationEmail = async (email: string, token: string) => {
+    const transporter = createEmailTransporter();
+    const verificationUrl = `${process.env.CLIENT_URL || 'http://localhost:5000'}/verify-email?token=${token}`;
+    
+    await transporter.sendMail({
+      from: process.env.EMAIL_FROM || 'noreply@gala8ball.com',
+      to: email,
+      subject: 'Verify Your Email - Gala 8Ball',
+      html: `
+        <h2>Welcome to Gala 8Ball!</h2>
+        <p>Please click the link below to verify your email address:</p>
+        <a href="${verificationUrl}" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Verify Email</a>
+        <p>This link will expire in 24 hours.</p>
+        <p>If you didn't create an account, you can safely ignore this email.</p>
+      `,
+    });
+  };
+
+  const sendPasswordResetEmail = async (email: string, token: string) => {
+    const transporter = createEmailTransporter();
+    const resetUrl = `${process.env.CLIENT_URL || 'http://localhost:5000'}/reset-password?token=${token}`;
+    
+    await transporter.sendMail({
+      from: process.env.EMAIL_FROM || 'noreply@gala8ball.com',
+      to: email,
+      subject: 'Password Reset - Gala 8Ball',
+      html: `
+        <h2>Password Reset Request</h2>
+        <p>Click the link below to reset your password:</p>
+        <a href="${resetUrl}" style="background: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reset Password</a>
+        <p>This link will expire in 1 hour.</p>
+        <p>If you didn't request a password reset, you can safely ignore this email.</p>
+      `,
+    });
+  };
+
+  // User Registration with Email Verification
+  app.post("/api/auth/signup", authRateLimit, async (req, res) => {
+    try {
+      const validatedData = userRegistrationSchema.parse(req.body);
+      
+      // Check if user already exists
+      const existingUser = await storage.getUserByEmail(validatedData.email);
+      if (existingUser) {
+        return res.status(409).json({ error: "User already exists with this email" });
+      }
+      
+      // Hash password
+      const saltRounds = 12;
+      const passwordHash = await bcrypt.hash(validatedData.password, saltRounds);
+      
+      // Create user account
+      const user = await storage.createUser({
+        email: validatedData.email,
+        passwordHash,
+        username: validatedData.username || `user_${Date.now()}`,
+        emailVerified: false,
+        status: 'active',
+      });
+      
+      // Generate email verification token (24h expiry)
+      const verificationToken = randomBytes(32).toString('hex');
+      await storage.createAuthToken({
+        userId: user.id,
+        token: verificationToken,
+        type: 'email_verification',
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+      });
+      
+      // Log registration activity
+      await storage.createActivityLog({
+        userId: user.id,
+        action: 'user_registered',
+        details: JSON.stringify({ email: validatedData.email }),
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+      });
+      
+      // Send verification email
+      await sendVerificationEmail(user.email, verificationToken);
+      
+      res.status(201).json({ 
+        message: "Registration successful. Please check your email to verify your account.",
+        user: {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          emailVerified: user.emailVerified,
+        }
+      });
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      console.error('Registration error:', error);
+      res.status(500).json({ error: "Registration failed" });
+    }
+  });
+
+  // User Login with Email/Password
+  app.post("/api/auth/login", authRateLimit, async (req, res) => {
+    try {
+      const validatedData = userLoginSchema.parse(req.body);
+      
+      // Find user by email
+      const user = await storage.getUserByEmail(validatedData.email);
+      if (!user || !user.passwordHash) {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+      
+      // Check user status
+      if (user.status === 'banned') {
+        return res.status(403).json({ error: "Account has been banned. Contact support." });
+      }
+      if (user.status === 'deleted') {
+        return res.status(403).json({ error: "Account not found" });
+      }
+      
+      // Verify password
+      const isValidPassword = await bcrypt.compare(validatedData.password, user.passwordHash);
+      if (!isValidPassword) {
+        return res.status(401).json({ error: "Invalid email or password" });
+      }
+      
+      // Update last login
+      await storage.updateUserLastLogin(user.id);
+      
+      // Log login activity
+      await storage.createActivityLog({
+        userId: user.id,
+        action: 'user_login',
+        details: JSON.stringify({ method: 'email_password' }),
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+      });
+      
+      // Create session
+      req.session.userId = user.id;
+      
+      res.json({ 
+        message: "Login successful",
+        user: {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          emailVerified: user.emailVerified,
+          status: user.status,
+        }
+      });
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      console.error('Login error:', error);
+      res.status(500).json({ error: "Login failed" });
+    }
+  });
+
+  // Email Verification
+  app.post("/api/auth/verify-email", authRateLimit, async (req, res) => {
+    try {
+      const { token } = req.body;
+      if (!token) {
+        return res.status(400).json({ error: "Verification token is required" });
+      }
+      
+      // Find and validate token with expiry and used status check
+      const authToken = await storage.getAuthToken(token);
+      if (!authToken || authToken.type !== 'email_verification') {
+        return res.status(400).json({ error: "Invalid or expired verification token" });
+      }
+      
+      // CRITICAL: Check token expiry and used status
+      if (authToken.used || new Date(authToken.expiresAt) < new Date()) {
+        return res.status(400).json({ error: "Invalid or expired verification token" });
+      }
+      
+      // Mark email as verified
+      await storage.updateUserEmailVerification(authToken.userId, true);
+      
+      // Mark token as used
+      await storage.markAuthTokenUsed(authToken.id);
+      
+      // Log verification activity
+      await storage.createActivityLog({
+        userId: authToken.userId,
+        action: 'email_verified',
+        details: JSON.stringify({ token_type: 'email_verification' }),
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+      });
+      
+      res.json({ message: "Email verified successfully" });
     } catch (error) {
-      res.status(500).json({ error: "Failed to toggle admin access" });
+      console.error('Email verification error:', error);
+      res.status(500).json({ error: "Email verification failed" });
+    }
+  });
+
+  // Password Reset Request
+  app.post("/api/auth/password-reset/request", passwordResetRateLimit, async (req, res) => {
+    try {
+      const validatedData = passwordResetRequestSchema.parse(req.body);
+      
+      // Find user (always return success for security)
+      const user = await storage.getUserByEmail(validatedData.email);
+      
+      if (user && user.status === 'active') {
+        // Generate reset token (1h expiry)
+        const resetToken = randomBytes(32).toString('hex');
+        await storage.createAuthToken({
+          userId: user.id,
+          token: resetToken,
+          type: 'password_reset',
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
+        });
+        
+        // Log password reset request
+        await storage.createActivityLog({
+          userId: user.id,
+          action: 'password_reset_requested',
+          details: JSON.stringify({ email: validatedData.email }),
+          ipAddress: req.ip,
+          userAgent: req.get('User-Agent'),
+        });
+        
+        // Send password reset email
+        await sendPasswordResetEmail(user.email, resetToken);
+      }
+      
+      // Always return success (security best practice)
+      res.json({ message: "If your email exists, you'll receive a reset link." });
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      console.error('Password reset request error:', error);
+      res.status(500).json({ error: "Password reset request failed" });
+    }
+  });
+
+  // Password Reset Confirmation
+  app.post("/api/auth/password-reset/confirm", authRateLimit, async (req, res) => {
+    try {
+      const validatedData = passwordResetConfirmSchema.parse(req.body);
+      
+      // Find and validate reset token with expiry and used status check
+      const authToken = await storage.getAuthToken(validatedData.token);
+      if (!authToken || authToken.type !== 'password_reset') {
+        return res.status(400).json({ error: "Invalid or expired reset token" });
+      }
+      
+      // CRITICAL: Check token expiry and used status
+      if (authToken.used || new Date(authToken.expiresAt) < new Date()) {
+        return res.status(400).json({ error: "Invalid or expired reset token" });
+      }
+      
+      // Hash new password
+      const saltRounds = 12;
+      const passwordHash = await bcrypt.hash(validatedData.password, saltRounds);
+      
+      // Update password
+      await storage.updateUserPassword(authToken.userId, passwordHash);
+      
+      // Mark token as used
+      await storage.markAuthTokenUsed(authToken.id);
+      
+      // Log password reset completion
+      await storage.createActivityLog({
+        userId: authToken.userId,
+        action: 'password_reset_completed',
+        details: JSON.stringify({ token_type: 'password_reset' }),
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+      });
+      
+      res.json({ message: "Password reset successful. You can now login with your new password." });
+    } catch (error: any) {
+      if (error.name === 'ZodError') {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      console.error('Password reset confirmation error:', error);
+      res.status(500).json({ error: "Password reset confirmation failed" });
     }
   });
 
