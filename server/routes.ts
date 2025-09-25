@@ -227,22 +227,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/auth/me", async (req, res) => {
     try {
       if (!req.session.userId) {
-        // Auto-create guest user if no session
-        const userData = {
-          username: `Guest${Date.now()}`,
-          walletAddress: `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        };
-        
-        const user = await storage.createUser(userData);
-        req.session.userId = user.id;
-        
-        // Ensure balance is initialized (createUser should do this, but double-check)
-        const balance = await storage.getUserBalance(user.id);
-        if (!balance) {
-          await storage.updateUserBalance(user.id, '1000');
-        }
-        
-        return res.json({ user });
+        // Return 401 for unauthenticated users - don't auto-create guests
+        return res.status(401).json({ error: "Not authenticated" });
       }
       
       const user = await storage.getUser(req.session.userId);
