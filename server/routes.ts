@@ -196,82 +196,58 @@ async function updateMarketPrices(
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
-  // Auth0 configuration
-  const config = {
-    authRequired: false,
-    auth0Logout: true,
-    secret: process.env.AUTH0_SECRET,
-    baseURL: process.env.AUTH0_BASE_URL || 'http://localhost:5000',
-    clientID: process.env.AUTH0_CLIENT_ID,
-    issuerBaseURL: `https://${process.env.AUTH0_DOMAIN}`,
-    routes: {
-      login: '/auth/login',
-      logout: '/auth/logout',
-      callback: '/auth/callback'
+  // Wallet-only authentication - no Auth0 needed
+  
+  // Wallet Connection - Auto-create users (before CSRF protection)
+  app.post("/api/auth/wallet-connect", async (req, res) => {
+    try {
+      const { walletAddress } = req.body;
+      
+      if (!walletAddress) {
+        return res.status(400).json({ error: "Wallet address is required" });
+      }
+      
+      // Find existing user by wallet address or create new one
+      let user = await storage.getUserByWalletAddress(walletAddress);
+      
+      if (!user) {
+        // Create new user automatically when wallet connects
+        const userData = {
+          walletAddress: walletAddress,
+          username: `Trader${Date.now()}`,
+          status: 'active'
+        };
+        
+        user = await storage.createUser(userData);
+        
+        // Give new users starting balance for trading
+        await storage.updateUserBalance(user.id, '1000.00');
+      }
+      
+      // Set session for immediate access
+      req.session.userId = user.id;
+      
+      res.json({ 
+        user, 
+        message: "Wallet connected successfully - ready to trade!" 
+      });
+    } catch (error) {
+      console.error('Wallet connect error:', error);
+      res.status(500).json({ error: "Failed to connect wallet" });
     }
-  };
+  });
   
-  // Apply Auth0 middleware
-  app.use(auth(config));
-  
-  // Apply CSRF protection to all state-changing routes (critical security)
+  // Apply CSRF protection to all other state-changing routes
   app.use(csrfProtection);
   
   // Mount public API router for bots and market makers
   app.use('/public/v1', publicApiRouter);
   
   // OpenAPI specification is now served by the public API router at /public/v1/openapi.json
-  
-  // Authentication endpoints
-  app.post("/api/auth/guest", async (req, res) => {
-    try {
-      const { username } = req.body;
-      
-      // Create or get guest user
-      const userData = {
-        username: username || `Guest${Date.now()}`,
-        walletAddress: `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      };
-      
-      const user = await storage.createUser(userData);
-      
-      // Set session
-      req.session.userId = user.id;
-      
-      res.json({ user, message: "Guest session created" });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to create guest session" });
-    }
-  });
 
   app.get("/api/auth/me", async (req: any, res) => {
     try {
-      // Check if user is authenticated via Auth0
-      if (req.oidc && req.oidc.isAuthenticated()) {
-        const auth0User = req.oidc.user;
-        
-        // Find or create user based on Auth0 profile
-        let user = await storage.getUserByEmail(auth0User.email);
-        if (!user) {
-          // Create new user from Auth0 profile
-          user = await storage.createUser({
-            email: auth0User.email,
-            username: auth0User.nickname || auth0User.name || auth0User.email.split('@')[0],
-            emailVerified: auth0User.email_verified || false,
-            status: 'active',
-          });
-        }
-        
-        // Set session for compatibility with existing code
-        req.session.userId = user.id;
-        
-        return res.json({ 
-          user,
-          isAdmin: req.session.isAdmin === true 
-        });
-      }
-      
-      // Fall back to session-based auth for existing users
+      // Check if user has wallet-based session
       if (req.session.userId) {
         const user = await storage.getUser(req.session.userId);
         if (user) {
@@ -282,8 +258,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Not authenticated
-      return res.status(401).json({ error: "Not authenticated" });
+      // Not authenticated - wallet connection required
+      return res.status(401).json({ error: "Connect wallet to continue" });
     } catch (error) {
       console.error('Auth error:', error);
       res.status(500).json({ error: "Authentication failed" });
@@ -292,28 +268,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/logout", async (req: any, res) => {
     try {
-      // Logout from Auth0 if authenticated
-      if (req.oidc && req.oidc.isAuthenticated()) {
-        // Auth0 logout will be handled by the middleware
-        // Just destroy session for compatibility
-        req.session.destroy((err: any) => {
-          if (err) {
-            console.error('Session destroy error:', err);
-          }
-        });
-        return res.redirect('/auth/logout');
-      }
-      
-      // Regular session logout for fallback users
+      // Wallet disconnection - just destroy session
       req.session.destroy((err: any) => {
         if (err) {
-          return res.status(500).json({ error: "Failed to logout" });
+          return res.status(500).json({ error: "Failed to disconnect wallet" });
         }
-        res.json({ message: "Logged out successfully" });
+        res.json({ message: "Wallet disconnected successfully" });
       });
     } catch (error) {
       console.error('Logout error:', error);
-      res.status(500).json({ error: "Logout failed" });
+      res.status(500).json({ error: "Disconnect failed" });
     }
   });
 

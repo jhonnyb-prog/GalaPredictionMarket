@@ -75,7 +75,7 @@ export function Navigation() {
     setStatus({ message, type });
   };
 
-  // Connect to MetaMask wallet
+  // Connect to MetaMask wallet and create user account
   const connectWallet = async () => {
     try {
       // Check if MetaMask is installed
@@ -88,7 +88,7 @@ export function Navigation() {
         return;
       }
 
-      showStatus('🔄 Requesting wallet connection...', 'info');
+      showStatus('🔄 Connecting wallet...', 'info');
 
       // Request account access
       const accounts = await window.ethereum.request({
@@ -101,18 +101,36 @@ export function Navigation() {
       }
 
       const address = accounts[0];
+      
+      // Create/connect user account via backend
+      const response = await fetch('/api/auth/wallet-connect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          walletAddress: address
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Wallet connection failed');
+      }
+
       setUserAddress(address);
       setWalletConnected(true);
-      showStatus(`✅ Wallet connected: ${address.substring(0, 6)}...${address.substring(38)}`, 'success');
+      showStatus(`✅ ${data.message}`, 'success');
+      
+      toast({
+        title: "Wallet Connected!",
+        description: "You can now trade prediction markets with your starting balance.",
+      });
 
-      // ENFORCE Ethereum mainnet (security requirement)
-      const chainId = await window.ethereum.request({ method: 'eth_chainId' });
-      if (chainId !== '0x1') {
-        showStatus('❌ Must use Ethereum Mainnet. Please switch networks in MetaMask.', 'error');
-        setWalletConnected(false);
-        setUserAddress('');
-        return;
-      }
+      // Refresh user data
+      queryClient.invalidateQueries({ queryKey: ['/api/auth/me'] });
 
     } catch (error: any) {
       console.error('Wallet connection error:', error);
@@ -446,7 +464,7 @@ export function Navigation() {
               </Dialog>
             )}
             
-            {/* Authentication Status */}
+            {/* User Status (Wallet-based) */}
             {user ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -457,36 +475,28 @@ export function Navigation() {
                   >
                     <div className="w-2 h-2 rounded-full bg-chart-1"></div>
                     <User className="w-4 h-4" />
-                    <span className="text-sm font-medium">{user.username || user.email || 'User'}</span>
+                    <span className="text-sm font-medium">{user.username || 'Trader'}</span>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuLabel>My Account</DropdownMenuLabel>
+                  <DropdownMenuLabel>Wallet Connected</DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem asChild>
                     <Link href="/portfolio" data-testid="nav-profile">
                       <User className="w-4 h-4 mr-2" />
-                      Profile
+                      Portfolio
                     </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem>
-                    <Settings className="w-4 h-4 mr-2" />
-                    Settings
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleLogout} data-testid="nav-logout">
                     <LogOut className="w-4 h-4 mr-2" />
-                    Sign Out
+                    Disconnect Wallet
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <div className="hidden sm:flex items-center space-x-2">
-                <a href="/auth/login">
-                  <Button variant="ghost" size="sm" data-testid="nav-login">
-                    Sign In with Auth0
-                  </Button>
-                </a>
+              <div className="hidden sm:flex items-center space-x-2 text-sm text-muted-foreground">
+                Connect wallet to start trading →
               </div>
             )}
             
@@ -513,16 +523,12 @@ export function Navigation() {
               <SheetContent side="right">
                 <div className="flex flex-col space-y-6 mt-8">
                   
-                  {/* Mobile Authentication */}
+                  {/* Mobile Wallet Status */}
                   {!user ? (
                     <div className="bg-card border border-border rounded-lg p-4">
                       <div className="text-sm font-medium mb-3">Get Started</div>
-                      <div className="flex flex-col space-y-2">
-                        <a href="/auth/login" onClick={() => setIsOpen(false)}>
-                          <Button variant="outline" className="w-full" data-testid="nav-mobile-login">
-                            Sign In with Auth0
-                          </Button>
-                        </a>
+                      <div className="text-xs text-muted-foreground">
+                        Connect your wallet using the button below to start trading prediction markets
                       </div>
                     </div>
                   ) : (
