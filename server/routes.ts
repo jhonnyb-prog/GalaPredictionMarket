@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { insertMarketSchema, createOrderSchema, insertUserSchema } from "@shared/schema";
 import { z } from "zod";
 import { IStorage } from "./storage";
+import publicApiRouter from "./publicApi";
 
 // Extend session interface to include userId and admin flag
 declare module 'express-session' {
@@ -128,6 +129,11 @@ async function updateMarketPrices(
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Mount public API router for bots and market makers
+  app.use('/public/v1', publicApiRouter);
+  
+  // OpenAPI specification is now served by the public API router at /public/v1/openapi.json
+  
   // Authentication endpoints
   app.post("/api/auth/guest", async (req, res) => {
     try {

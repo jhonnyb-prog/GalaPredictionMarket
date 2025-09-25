@@ -13,6 +13,13 @@ export function Footer() {
           
           <div className="flex flex-col items-center gap-2 text-sm md:flex-row md:gap-6">
             <Link 
+              href="/docs/api" 
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              data-testid="link-api-docs"
+            >
+              API Docs
+            </Link>
+            <Link 
               href="/terms" 
               className="text-muted-foreground hover:text-foreground transition-colors"
               data-testid="link-terms"

@@ -1,5 +1,5 @@
 import { 
-  users, markets, positions, orders, trades, userBalances, collectedFees, feeWithdrawals,
+  users, markets, positions, orders, trades, userBalances, collectedFees, feeWithdrawals, apiKeys, apiKeyNonces,
   type User, type InsertUser,
   type Market, type InsertMarket,
   type Position, type InsertPosition,
@@ -8,7 +8,10 @@ import {
   type UserBalance,
   type CollectedFee,
   type FeeWithdrawal,
-  type InsertFeeWithdrawal
+  type InsertFeeWithdrawal,
+  type ApiKey,
+  type InsertApiKey,
+  type ApiKeyNonce
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -79,6 +82,20 @@ export interface IStorage {
     totalTrades: number;
     totalUsers: number;
   }>;
+
+  // API Keys
+  createApiKey(apiKey: InsertApiKey & { signingSecret: string }): Promise<ApiKey>;
+  getApiKey(id: string): Promise<ApiKey | undefined>;
+  getApiKeyBySigningSecret(signingSecret: string): Promise<(ApiKey & { user: User }) | undefined>;
+  getApiKeyWithUser(keyId: string): Promise<(ApiKey & { user: User }) | undefined>;
+  getUserApiKeys(userId: string): Promise<ApiKey[]>;
+  updateApiKey(id: string, updates: Partial<ApiKey>): Promise<ApiKey>;
+  deleteApiKey(id: string): Promise<void>;
+  updateApiKeyLastUsed(id: string): Promise<void>;
+
+  // API Key Nonces (for replay attack prevention)
+  checkAndStoreNonce(keyId: string, nonce: string): Promise<boolean>;
+  cleanupExpiredNonces(): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -471,6 +488,103 @@ export class DatabaseStorage implements IStorage {
       totalTrades: totalTradesResult.totalTrades,
       totalUsers: totalUsersResult.totalUsers,
     };
+  }
+
+  // API Key methods implementation
+  async createApiKey(apiKey: InsertApiKey & { signingSecret: string }): Promise<ApiKey> {
+    const [newKey] = await db.insert(apiKeys).values({
+      ...apiKey,
+      updatedAt: new Date(),
+    }).returning();
+    return newKey;
+  }
+
+  async getApiKey(id: string): Promise<ApiKey | undefined> {
+    const [apiKey] = await db.select().from(apiKeys).where(eq(apiKeys.id, id));
+    return apiKey;
+  }
+
+  async getApiKeyBySigningSecret(signingSecret: string): Promise<(ApiKey & { user: User }) | undefined> {
+    const [result] = await db
+      .select()
+      .from(apiKeys)
+      .leftJoin(users, eq(apiKeys.userId, users.id))
+      .where(and(eq(apiKeys.signingSecret, signingSecret), eq(apiKeys.status, 'active')));
+    
+    if (!result || !result.users) {
+      return undefined;
+    }
+
+    return {
+      ...result.api_keys,
+      user: result.users,
+    };
+  }
+
+  async getApiKeyWithUser(keyId: string): Promise<(ApiKey & { user: User }) | undefined> {
+    const [result] = await db
+      .select()
+      .from(apiKeys)
+      .leftJoin(users, eq(apiKeys.userId, users.id))
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.status, 'active')));
+    
+    if (!result || !result.users) {
+      return undefined;
+    }
+
+    return {
+      ...result.api_keys,
+      user: result.users,
+    };
+  }
+
+  async getUserApiKeys(userId: string): Promise<ApiKey[]> {
+    return await db.select().from(apiKeys).where(eq(apiKeys.userId, userId)).orderBy(desc(apiKeys.createdAt));
+  }
+
+  async updateApiKey(id: string, updates: Partial<ApiKey>): Promise<ApiKey> {
+    const [updatedKey] = await db.update(apiKeys).set({
+      ...updates,
+      updatedAt: new Date(),
+    }).where(eq(apiKeys.id, id)).returning();
+    return updatedKey;
+  }
+
+  async deleteApiKey(id: string): Promise<void> {
+    await db.delete(apiKeys).where(eq(apiKeys.id, id));
+  }
+
+  async updateApiKeyLastUsed(id: string): Promise<void> {
+    await db.update(apiKeys).set({
+      lastUsedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(apiKeys.id, id));
+  }
+
+  async checkAndStoreNonce(keyId: string, nonce: string): Promise<boolean> {
+    // Check if nonce already exists (replay protection)
+    const [existing] = await db
+      .select()
+      .from(apiKeyNonces)
+      .where(and(eq(apiKeyNonces.keyId, keyId), eq(apiKeyNonces.nonce, nonce)));
+
+    if (existing) {
+      return false; // Nonce already used (potential replay attack)
+    }
+
+    // Store the nonce
+    await db.insert(apiKeyNonces).values({
+      keyId,
+      nonce,
+    });
+
+    return true;
+  }
+
+  async cleanupExpiredNonces(): Promise<void> {
+    // Clean up nonces older than 1 hour (prevent table from growing indefinitely)
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    await db.delete(apiKeyNonces).where(sql`${apiKeyNonces.createdAt} < ${oneHourAgo}`);
   }
 }
 

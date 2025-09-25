@@ -1,0 +1,135 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Gala 8Ball Prediction Market API",
+    "description": "Public REST API for interacting with the Gala 8Ball prediction market platform. This API allows bots and market makers to access market data, manage positions, and execute trades programmatically.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/public/v1",
+      "description": "Production API Server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "API key ID (keyId only, never include the secret)"
+      },
+      "HmacAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Signature",
+        "description": "HMAC-SHA256 signature. Requires X-Timestamp header with Unix timestamp"
+      },
+      "TimestampAuth": {
+        "type": "apiKey",
+        "in": "header", 
+        "name": "X-Timestamp",
+        "description": "Unix timestamp for HMAC signature verification"
+      }
+    },
+    "schemas": {
+      "Market": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "question": { "type": "string" },
+          "yesPrice": { "type": "string" },
+          "noPrice": { "type": "string" },
+          "volume": { "type": "string" },
+          "status": { "type": "string", "enum": ["active", "resolved"] }
+        }
+      },
+      "OrderRequest": {
+        "type": "object",
+        "required": ["marketId", "type", "side", "outcome", "amount"],
+        "properties": {
+          "marketId": { "type": "string" },
+          "type": { "type": "string", "enum": ["market", "limit"] },
+          "side": { "type": "string", "enum": ["buy", "sell"] },
+          "outcome": { "type": "string", "enum": ["yes", "no"] },
+          "amount": { "type": "string" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/ping": {
+      "get": {
+        "summary": "Health Check",
+        "responses": {
+          "200": {
+            "description": "API is healthy"
+          }
+        },
+        "tags": ["Health"]
+      }
+    },
+    "/markets": {
+      "get": {
+        "summary": "List Markets",
+        "responses": {
+          "200": {
+            "description": "List of markets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "markets": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Market" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": ["Markets"]
+      }
+    },
+    "/account/balance": {
+      "get": {
+        "summary": "Get Account Balance",
+        "security": [{ "ApiKeyAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Account balance"
+          }
+        },
+        "tags": ["Account"]
+      }
+    },
+    "/orders": {
+      "post": {
+        "summary": "Create Order",
+        "security": [{ "ApiKeyAuth": [], "HmacAuth": [], "TimestampAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/OrderRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Order created"
+          }
+        },
+        "tags": ["Trading"]
+      }
+    }
+  },
+  "tags": [
+    { "name": "Health", "description": "Health checks" },
+    { "name": "Markets", "description": "Market data" },
+    { "name": "Account", "description": "Account information" },
+    { "name": "Trading", "description": "Trading operations" }
+  ]
+}

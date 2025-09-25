@@ -12,6 +12,7 @@ import Home from "@/pages/home";
 import MarketDetail from "@/pages/market-detail";
 import Portfolio from "@/pages/portfolio";
 import Admin from "@/pages/admin";
+import ApiDocs from "@/pages/api-docs";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 import { initGA } from "../lib/analytics";
@@ -27,6 +28,7 @@ function Router() {
       <Route path="/market/:id" component={MarketDetail} />
       <Route path="/portfolio" component={Portfolio} />
       <Route path="/admin" component={Admin} />
+      <Route path="/docs/api" component={ApiDocs} />
       <Route component={NotFound} />
     </Switch>
   );

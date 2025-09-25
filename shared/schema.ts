@@ -11,6 +11,8 @@ export const orderSideEnum = pgEnum('order_side', ['buy', 'sell']);
 export const orderStatusEnum = pgEnum('order_status', ['pending', 'partial', 'filled', 'cancelled', 'expired']);
 export const outcomeEnum = pgEnum('outcome', ['yes', 'no']);
 export const feeWithdrawalStatusEnum = pgEnum('fee_withdrawal_status', ['pending', 'completed', 'failed', 'cancelled']);
+export const apiKeyStatusEnum = pgEnum('api_key_status', ['active', 'suspended', 'revoked']);
+export const apiKeyScopeEnum = pgEnum('api_key_scope', ['read', 'trade', 'admin']);
 
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -119,6 +121,29 @@ export const feeWithdrawals = pgTable("fee_withdrawals", {
   completedAt: timestamp("completed_at"),
 });
 
+// Table for API keys used by bots and market makers
+export const apiKeys = pgTable("api_keys", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  signingSecret: text("signing_secret").notNull(), // Actual secret for HMAC signatures (encrypted at rest in production)
+  label: text("label").notNull(), // User-friendly name for the key
+  scopes: text("scopes").array().notNull(), // Array of scopes like ['read', 'trade']
+  status: apiKeyStatusEnum("status").default('active'),
+  rateLimitTier: integer("rate_limit_tier").default(1), // Rate limit tier (1 = basic, higher = more requests)
+  lastUsedAt: timestamp("last_used_at"),
+  expiresAt: timestamp("expires_at"), // Optional expiration
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Table for API key nonce tracking (prevents replay attacks)
+export const apiKeyNonces = pgTable("api_key_nonces", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  keyId: varchar("key_id").references(() => apiKeys.id).notNull(),
+  nonce: text("nonce").notNull(), // Unique nonce/timestamp combination
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ many, one }) => ({
   positions: many(positions),
@@ -162,6 +187,15 @@ export const collectedFeesRelations = relations(collectedFees, ({ one }) => ({
 
 export const feeWithdrawalsRelations = relations(feeWithdrawals, ({ one }) => ({
   adminUser: one(users, { fields: [feeWithdrawals.adminUserId], references: [users.id] }),
+}));
+
+export const apiKeysRelations = relations(apiKeys, ({ one, many }) => ({
+  user: one(users, { fields: [apiKeys.userId], references: [users.id] }),
+  nonces: many(apiKeyNonces),
+}));
+
+export const apiKeyNoncesRelations = relations(apiKeyNonces, ({ one }) => ({
+  apiKey: one(apiKeys, { fields: [apiKeyNonces.keyId], references: [apiKeys.id] }),
 }));
 
 // Schemas
@@ -225,6 +259,18 @@ export const insertFeeWithdrawalSchema = createInsertSchema(feeWithdrawals).omit
   toAddress: z.string().min(10, "Invalid GalaChain address").max(200, "Address too long"),
 });
 
+export const insertApiKeySchema = createInsertSchema(apiKeys).omit({
+  id: true,
+  signingSecret: true, // Server-generated only, never from client
+  lastUsedAt: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  scopes: z.array(z.enum(['read', 'trade', 'admin'])).min(1, "At least one scope is required"),
+  label: z.string().min(1, "Label is required").max(100, "Label too long"),
+  expiresAt: z.string().transform((val) => val ? new Date(val) : null).optional(),
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -245,3 +291,7 @@ export type UserBalance = typeof userBalances.$inferSelect;
 export type CollectedFee = typeof collectedFees.$inferSelect;
 export type FeeWithdrawal = typeof feeWithdrawals.$inferSelect;
 export type InsertFeeWithdrawal = z.infer<typeof insertFeeWithdrawalSchema>;
+
+export type ApiKey = typeof apiKeys.$inferSelect;
+export type InsertApiKey = z.infer<typeof insertApiKeySchema>;
+export type ApiKeyNonce = typeof apiKeyNonces.$inferSelect;
