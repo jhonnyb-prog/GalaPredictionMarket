@@ -2,6 +2,9 @@ import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import MemoryStore from "memorystore";
 import { createClient } from 'redis';
+import csrf from 'csurf';
+import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
@@ -103,6 +106,65 @@ app.use((req, res, next) => {
 (async () => {
   // Setup session storage before registering routes
   await setupSessions(app);
+  
+  // Cookie parser required for CSRF cookie-based tokens
+  app.use(cookieParser());
+  
+  // CORS configuration - secure but functional
+  app.use(cors({
+    origin: function (origin, callback) {
+      // In development, be more permissive for functionality
+      if (process.env.NODE_ENV === 'development') {
+        // Allow localhost and replit.dev origins in development
+        if (!origin || 
+            origin.includes('localhost') || 
+            origin.includes('127.0.0.1') || 
+            origin.includes('0.0.0.0') ||
+            origin.includes('replit.dev') ||
+            origin.includes('repl.co')) {
+          return callback(null, true);
+        }
+      }
+      
+      // Production: strict whitelist
+      const allowedOrigins = [
+        'http://localhost:5000',
+        'https://localhost:5000'
+      ];
+      
+      if (process.env.NODE_ENV === 'production' && process.env.FRONTEND_URL) {
+        allowedOrigins.push(process.env.FRONTEND_URL);
+      }
+      
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn(`CORS rejected origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'), false);
+      }
+    },
+    credentials: true, // Required for cookies and authentication
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+    exposedHeaders: ['X-CSRF-Token']
+  }));
+  
+  // CSRF protection for state-changing operations
+  const csrfProtection = csrf({
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict'
+    }
+  });
+  
+  // Apply CSRF protection to ALL /api routes (csurf handles safe methods automatically)
+  app.use('/api', csrfProtection);
+  
+  // CSRF token endpoint (now has access to req.csrfToken() via middleware)
+  app.get('/api/csrf-token', (req, res) => {
+    res.json({ csrfToken: req.csrfToken() });
+  });
   
   const server = await registerRoutes(app);
 
