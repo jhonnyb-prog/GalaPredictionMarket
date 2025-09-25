@@ -44,6 +44,7 @@ export interface IStorage {
   
   // Positions
   getUserPositions(userId: string): Promise<Position[]>;
+  getMarketPositions(marketId: string): Promise<Position[]>;
   getPosition(userId: string, marketId: string, outcome: 'yes' | 'no'): Promise<Position | undefined>;
   createPosition(position: InsertPosition): Promise<Position>;
   updatePosition(id: string, updates: Partial<Position>): Promise<Position>;
@@ -269,6 +270,10 @@ export class DatabaseStorage implements IStorage {
 
   async getUserPositions(userId: string): Promise<Position[]> {
     return await db.select().from(positions).where(eq(positions.userId, userId));
+  }
+
+  async getMarketPositions(marketId: string): Promise<Position[]> {
+    return await db.select().from(positions).where(eq(positions.marketId, marketId));
   }
 
   async getPosition(userId: string, marketId: string, outcome: 'yes' | 'no'): Promise<Position | undefined> {

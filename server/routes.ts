@@ -78,6 +78,53 @@ function requireAdmin(req: any, res: any, next: any) {
   next();
 }
 
+// Settlement function to handle market resolution payouts
+async function settleMarketPositions(marketId: string, resolvedOutcome: 'yes' | 'no') {
+  try {
+    // Get all positions for this market
+    const positions = await storage.getMarketPositions(marketId);
+    
+    // Calculate payouts for each position
+    for (const position of positions) {
+      const shares = parseFloat(position.shares);
+      let payout = 0;
+      
+      // Calculate payout based on resolved outcome
+      if (position.outcome === resolvedOutcome) {
+        // Winning positions: each share is worth $1
+        payout = shares;
+      } else {
+        // Losing positions: each share is worth $0
+        payout = 0;
+      }
+      
+      // Update user balance with payout
+      if (payout > 0) {
+        const currentBalance = await storage.getUserBalance(position.userId);
+        const currentAmount = parseFloat(currentBalance?.balance || '0');
+        const newBalance = (currentAmount + payout).toFixed(8);
+        
+        await storage.updateUserBalance(position.userId, newBalance);
+      }
+      
+      // Clear the position (shares are now converted to cash)
+      await storage.updatePosition(position.id, {
+        shares: '0',
+        totalCost: '0'
+      });
+    }
+    
+    console.log(`Settled ${positions.length} positions for market ${marketId} with outcome ${resolvedOutcome}`);
+    
+    if (positions.length > 0) {
+      console.log(`Settlement details: ${positions.map(p => `User ${p.userId}: ${p.shares} ${p.outcome} shares`).join(', ')}`);
+    }
+  } catch (error) {
+    console.error('Settlement error:', error);
+    throw error;
+  }
+}
+
 // CSRF protection middleware (check Origin header for state-changing requests)
 function csrfProtection(req: any, res: any, next: any) {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
@@ -688,12 +735,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         resolutionSource: z.string().optional()
       }).strict().parse(req.body);
 
-      const market = await storage.updateMarket(req.params.id, updateData);
-      res.json(market);
+      // If resolving the market, handle settlement
+      if (updateData.status === 'resolved' && updateData.resolvedOutcome) {
+        // First update the market
+        const market = await storage.updateMarket(req.params.id, {
+          ...updateData,
+          resolvedAt: new Date()
+        });
+
+        // Then settle all positions for this market
+        await settleMarketPositions(req.params.id, updateData.resolvedOutcome);
+
+        res.json(market);
+      } else {
+        // Regular market update without settlement
+        const market = await storage.updateMarket(req.params.id, updateData);
+        res.json(market);
+      }
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid market data", details: error.errors });
       }
+      console.error('Market update error:', error);
       res.status(500).json({ error: "Failed to update market" });
     }
   });
