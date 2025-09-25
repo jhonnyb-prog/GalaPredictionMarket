@@ -1112,6 +1112,128 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // API Key Management Endpoints
+  app.post("/api/admin/apikeys", requireAdmin, async (req, res) => {
+    try {
+      const { generateApiKey, generateSigningSecret } = await import("./publicApiMiddleware");
+      
+      // Validate input using the schema
+      const validatedData = insertApiKeySchema.parse(req.body);
+      
+      // Generate secure keys
+      const keyId = generateApiKey();
+      const signingSecret = generateSigningSecret();
+      
+      // Create API key in database
+      const newApiKey = await storage.createApiKey({
+        ...validatedData,
+        id: keyId,
+        signingSecret: signingSecret,
+      });
+      
+      // Return API key details (including the signing secret for one-time display)
+      res.status(201).json({
+        success: true,
+        apiKey: {
+          id: newApiKey.id,
+          userId: newApiKey.userId,
+          label: newApiKey.label,
+          scopes: newApiKey.scopes,
+          status: newApiKey.status,
+          rateLimitTier: newApiKey.rateLimitTier,
+          expiresAt: newApiKey.expiresAt,
+          createdAt: newApiKey.createdAt,
+          signingSecret: signingSecret, // IMPORTANT: Only shown once
+        },
+        message: "API key created successfully. Please save the signing secret as it will not be shown again."
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          error: "Invalid API key data", 
+          details: error.errors 
+        });
+      }
+      console.error("API key creation error:", error);
+      res.status(500).json({ error: "Failed to create API key" });
+    }
+  });
+
+  app.get("/api/admin/apikeys", requireAdmin, async (req, res) => {
+    try {
+      const { userId } = req.query;
+      
+      if (userId) {
+        // Get API keys for specific user
+        const apiKeys = await storage.getUserApiKeys(userId as string);
+        res.json({ apiKeys });
+      } else {
+        // Get all API keys (admin view) - this requires a new storage method
+        // For now, return error suggesting to use userId parameter
+        res.status(400).json({ 
+          error: "userId parameter is required",
+          message: "Use ?userId=USER_ID to get API keys for a specific user"
+        });
+      }
+    } catch (error) {
+      console.error("API key listing error:", error);
+      res.status(500).json({ error: "Failed to retrieve API keys" });
+    }
+  });
+
+  app.patch("/api/admin/apikeys/:id", requireAdmin, async (req, res) => {
+    try {
+      const keyId = req.params.id;
+      const updateData = z.object({
+        status: z.enum(['active', 'suspended', 'revoked']).optional(),
+        label: z.string().min(1).max(100).optional(),
+        rateLimitTier: z.number().int().min(1).max(10).optional(),
+        expiresAt: z.string().transform(val => val ? new Date(val) : null).optional(),
+      }).strict().parse(req.body);
+      
+      const updatedApiKey = await storage.updateApiKey(keyId, updateData);
+      
+      res.json({
+        success: true,
+        apiKey: {
+          id: updatedApiKey.id,
+          userId: updatedApiKey.userId,
+          label: updatedApiKey.label,
+          scopes: updatedApiKey.scopes,
+          status: updatedApiKey.status,
+          rateLimitTier: updatedApiKey.rateLimitTier,
+          expiresAt: updatedApiKey.expiresAt,
+          lastUsedAt: updatedApiKey.lastUsedAt,
+          createdAt: updatedApiKey.createdAt,
+          updatedAt: updatedApiKey.updatedAt,
+        }
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          error: "Invalid update data", 
+          details: error.errors 
+        });
+      }
+      console.error("API key update error:", error);
+      res.status(500).json({ error: "Failed to update API key" });
+    }
+  });
+
+  app.delete("/api/admin/apikeys/:id", requireAdmin, async (req, res) => {
+    try {
+      const keyId = req.params.id;
+      await storage.deleteApiKey(keyId);
+      
+      res.json({
+        success: true,
+        message: "API key deleted successfully"
+      });
+    } catch (error) {
+      console.error("API key deletion error:", error);
+      res.status(500).json({ error: "Failed to delete API key" });
+    }
+  });
 
   const httpServer = createServer(app);
   return httpServer;
