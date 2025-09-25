@@ -345,3 +345,12 @@ export const insertDepositSchema = createInsertSchema(deposits).omit({
 });
 
 export type InsertDeposit = z.infer<typeof insertDepositSchema>;
+export type InsertApiKeyNonce = typeof apiKeyNonces.$inferInsert;
+
+// Deposit configuration types for secure server-client communication
+export interface DepositConfig {
+  recipientAddress: string;
+  allowedTokens: Record<string, { address: string; decimals: number }>;
+  chainId: number;
+  minAmount: number;
+}

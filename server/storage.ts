@@ -1,5 +1,5 @@
 import { 
-  users, markets, positions, orders, trades, userBalances, collectedFees, feeWithdrawals, apiKeys, apiKeyNonces,
+  users, markets, positions, orders, trades, userBalances, collectedFees, feeWithdrawals, apiKeys, apiKeyNonces, deposits,
   type User, type InsertUser,
   type Market, type InsertMarket,
   type Position, type InsertPosition,
@@ -11,7 +11,9 @@ import {
   type InsertFeeWithdrawal,
   type ApiKey,
   type InsertApiKey,
-  type ApiKeyNonce
+  type ApiKeyNonce,
+  type Deposit,
+  type InsertDeposit
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -96,6 +98,14 @@ export interface IStorage {
   // API Key Nonces (for replay attack prevention)
   checkAndStoreNonce(keyId: string, nonce: string): Promise<boolean>;
   cleanupExpiredNonces(): Promise<void>;
+
+  // Deposit management
+  createDeposit(depositData: InsertDeposit): Promise<Deposit>;
+  getUserDeposits(userId: string): Promise<Deposit[]>;
+  getDeposit(id: string): Promise<Deposit | undefined>;
+  updateDeposit(id: string, updateData: Partial<Deposit>): Promise<Deposit>;
+  getDepositByTransactionHash(txHash: string): Promise<Deposit | undefined>;
+  getPendingDeposits(): Promise<Deposit[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -585,6 +595,50 @@ export class DatabaseStorage implements IStorage {
     // Clean up nonces older than 1 hour (prevent table from growing indefinitely)
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
     await db.delete(apiKeyNonces).where(sql`${apiKeyNonces.createdAt} < ${oneHourAgo}`);
+  }
+
+  // Deposit management implementation
+  async createDeposit(depositData: InsertDeposit): Promise<Deposit> {
+    const [deposit] = await db.insert(deposits).values(depositData).returning();
+    return deposit;
+  }
+
+  async getUserDeposits(userId: string): Promise<Deposit[]> {
+    return await db
+      .select()
+      .from(deposits)
+      .where(eq(deposits.userId, userId))
+      .orderBy(desc(deposits.createdAt));
+  }
+
+  async getDeposit(id: string): Promise<Deposit | undefined> {
+    const [deposit] = await db.select().from(deposits).where(eq(deposits.id, id));
+    return deposit || undefined;
+  }
+
+  async updateDeposit(id: string, updateData: Partial<Deposit>): Promise<Deposit> {
+    const [updatedDeposit] = await db
+      .update(deposits)
+      .set(updateData as any)
+      .where(eq(deposits.id, id))
+      .returning();
+    return updatedDeposit;
+  }
+
+  async getDepositByTransactionHash(txHash: string): Promise<Deposit | undefined> {
+    const [deposit] = await db
+      .select()
+      .from(deposits)
+      .where(eq(deposits.transactionHash, txHash));
+    return deposit || undefined;
+  }
+
+  async getPendingDeposits(): Promise<Deposit[]> {
+    return await db
+      .select()
+      .from(deposits)
+      .where(eq(deposits.status, 'pending'))
+      .orderBy(deposits.createdAt);
   }
 }
 

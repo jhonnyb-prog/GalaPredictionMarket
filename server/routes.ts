@@ -1,10 +1,12 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertMarketSchema, createOrderSchema, insertUserSchema } from "@shared/schema";
+import { insertMarketSchema, createOrderSchema, insertUserSchema, type DepositConfig } from "@shared/schema";
 import { z } from "zod";
 import { IStorage } from "./storage";
 import publicApiRouter from "./publicApi";
+import { ethers } from "ethers";
+import cors from "cors";
 
 // Extend session interface to include userId and admin flag
 declare module 'express-session' {
@@ -44,6 +46,29 @@ function requireAdmin(req: any, res: any, next: any) {
   
   next();
 }
+
+// CSRF protection middleware (check Origin header for state-changing requests)
+function csrfProtection(req: any, res: any, next: any) {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+    return next();
+  }
+  
+  const origin = req.get('Origin');
+  const host = req.get('Host');
+  
+  if (!origin || !host || !origin.endsWith(host)) {
+    return res.status(403).json({ error: "CSRF protection: Invalid origin" });
+  }
+  
+  next();
+}
+
+// Initialize blockchain provider for transaction verification
+const getEthereumProvider = () => {
+  // Use Infura, Alchemy, or other RPC provider for mainnet verification
+  const rpcUrl = process.env.ETHEREUM_RPC_URL || 'https://cloudflare-eth.com'; // Free Cloudflare Ethereum RPC
+  return new ethers.providers.JsonRpcProvider(rpcUrl);
+};
 
 // Validation schemas
 const faucetSchema = z.object({
@@ -129,6 +154,9 @@ async function updateMarketPrices(
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Apply CSRF protection to all state-changing routes (critical security)
+  app.use(csrfProtection);
+  
   // Mount public API router for bots and market makers
   app.use('/public/v1', publicApiRouter);
   
@@ -1018,6 +1046,187 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(feesData);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch collected fees" });
+    }
+  });
+
+  // Cryptocurrency deposit configuration endpoint
+  app.get("/api/deposits/config", requireAuth, async (req, res) => {
+    try {
+      // Server-controlled configuration to prevent client manipulation
+      const config: DepositConfig = {
+        recipientAddress: process.env.ONRAMP_WALLET_ETH!,
+        allowedTokens: {
+          'USDC': {
+            address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+            decimals: 6
+          },
+          'USDT': {
+            address: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+            decimals: 6
+          }
+        },
+        chainId: 1, // Ethereum mainnet only
+        minAmount: 1
+      };
+
+      if (!config.recipientAddress) {
+        return res.status(500).json({ error: "Deposit configuration not available" });
+      }
+
+      res.json(config);
+    } catch (error) {
+      console.error('Config fetch error:', error);
+      res.status(500).json({ error: "Failed to fetch deposit configuration" });
+    }
+  });
+
+  // SECURE cryptocurrency deposit endpoint with blockchain verification
+  app.post("/api/deposits/pending", requireAuth, csrfProtection, async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      // Server configuration (NEVER trust client for security-critical data)
+      const recipientAddress = process.env.ONRAMP_WALLET_ETH;
+      const allowedTokens = {
+        'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7'
+      } as const;
+
+      if (!recipientAddress) {
+        return res.status(500).json({ error: "Deposit configuration not available" });
+      }
+
+      // Strict validation with Zod (security-first approach)
+      const depositSchema = z.object({
+        transactionHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/, "Invalid transaction hash"),
+        tokenType: z.enum(['USDC', 'USDT'], { required_error: "Invalid token type" }),
+        amount: z.string().regex(/^\d+(\.\d+)?$/, "Invalid amount format"),
+        chainId: z.number().refine(val => val === 1, "Only Ethereum mainnet allowed")
+      });
+
+      const validatedData = depositSchema.parse(req.body);
+
+      // Prevent replay attacks - check for duplicate transaction
+      const existingDeposit = await storage.getDepositByTransactionHash(validatedData.transactionHash);
+      if (existingDeposit) {
+        return res.status(409).json({ error: "Transaction already processed" });
+      }
+
+      // CRITICAL SECURITY: Verify transaction on blockchain (don't trust client)
+      const provider = getEthereumProvider();
+      
+      try {
+        const receipt = await provider.getTransactionReceipt(validatedData.transactionHash);
+        
+        if (!receipt) {
+          return res.status(400).json({ error: "Transaction not found on blockchain" });
+        }
+
+        if (receipt.status !== 1) {
+          return res.status(400).json({ error: "Transaction failed on blockchain" });
+        }
+
+        // CRITICAL: Verify Ethereum mainnet using provider network (receipt.chainId doesn't exist in ethers v5)
+        const network = await provider.getNetwork();
+        if (network.chainId !== 1) {
+          return res.status(400).json({ error: "Invalid chain - Ethereum mainnet required" });
+        }
+
+        // Decode ERC-20 Transfer events for verification
+        const expectedTokenAddress = allowedTokens[validatedData.tokenType];
+        const transferTopic = ethers.utils.id("Transfer(address,address,uint256)");
+        
+        const transferLog = receipt.logs.find(log => 
+          log.address.toLowerCase() === expectedTokenAddress.toLowerCase() &&
+          log.topics[0] === transferTopic
+        );
+
+        if (!transferLog) {
+          return res.status(400).json({ error: "Valid token transfer not found" });
+        }
+
+        // Decode and verify transfer details
+        const decodedLog = ethers.utils.defaultAbiCoder.decode(['uint256'], transferLog.data);
+        const transferAmount = decodedLog[0];
+        
+        // Verify recipient is our wallet
+        const transferTo = ethers.utils.getAddress('0x' + transferLog.topics[2].slice(26));
+        if (transferTo.toLowerCase() !== recipientAddress.toLowerCase()) {
+          return res.status(400).json({ error: "Transfer not sent to correct wallet" });
+        }
+
+        // CRITICAL: Verify blockchain amount matches client claim and meets minimum
+        const decimals = 6; // Both USDC and USDT use 6 decimals
+        const expectedAmount = ethers.utils.parseUnits(validatedData.amount, decimals);
+        
+        // Exact match required - prevent under/over-crediting attacks
+        if (!transferAmount.eq(expectedAmount)) {
+          return res.status(400).json({ 
+            error: "Transfer amount mismatch", 
+            details: `Expected: ${ethers.utils.formatUnits(expectedAmount, decimals)}, Got: ${ethers.utils.formatUnits(transferAmount, decimals)}` 
+          });
+        }
+
+        // Server-enforced minimum amount check
+        const minAmount = ethers.utils.parseUnits('1', decimals);
+        if (transferAmount.lt(minAmount)) {
+          return res.status(400).json({ error: "Amount below minimum deposit of 1 USDC/USDT" });
+        }
+
+        // Extract sender address from blockchain
+        const fromAddress = ethers.utils.getAddress('0x' + transferLog.topics[1].slice(26));
+
+        // Create VERIFIED deposit record (all data from blockchain)
+        const deposit = await storage.createDeposit({
+          userId: req.session.userId,
+          transactionHash: validatedData.transactionHash,
+          walletAddress: recipientAddress, // Server-verified
+          tokenContract: expectedTokenAddress, // Server-validated
+          fromAddress: fromAddress, // Blockchain-verified
+          tokenType: validatedData.tokenType,
+          amount: validatedData.amount,
+          userMessage: '', // Not needed for identification
+          status: 'pending',
+          chainId: 1, // Server-enforced mainnet
+          blockNumber: receipt.blockNumber,
+          confirmations: receipt.confirmations || 0
+        });
+
+        res.status(201).json(deposit);
+        
+      } catch (blockchainError: any) {
+        console.error('Blockchain verification error:', blockchainError);
+        return res.status(400).json({ 
+          error: "Transaction verification failed", 
+          details: blockchainError.message 
+        });
+      }
+
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      }
+      console.error('Deposit creation error:', error);
+      res.status(500).json({ error: "Failed to process deposit" });
+    }
+  });
+
+  app.get("/api/users/:userId/deposits", requireAuth, async (req, res) => {
+    try {
+      const userId = req.params.userId;
+      
+      // Users can only access their own deposits (or admin can access any)
+      if (req.session.userId !== userId && req.session.role !== 'admin') {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const deposits = await storage.getUserDeposits(userId);
+      res.json(deposits);
+    } catch (error) {
+      console.error('Get deposits error:', error);
+      res.status(500).json({ error: "Failed to fetch deposits" });
     }
   });
 

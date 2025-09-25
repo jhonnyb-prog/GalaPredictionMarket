@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -6,48 +6,236 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Menu, Plus, UserCog } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Menu, Plus, UserCog, Wallet } from "lucide-react";
 import { useUser } from "@/contexts/UserContext";
 import { useRole } from "@/contexts/RoleContext";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ethers } from "ethers";
+import type { DepositConfig } from "@shared/schema";
 
 export function Navigation() {
   const { user } = useUser();
   const { role, setRole, isAdmin } = useRole();
   const [location] = useLocation();
   const [isOpen, setIsOpen] = useState(false);
-  const [isFaucetOpen, setIsFaucetOpen] = useState(false);
-  const [faucetAmount, setFaucetAmount] = useState('100');
+  const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
+  const [depositAmount, setDepositAmount] = useState('100');
+  const [selectedToken, setSelectedToken] = useState<'USDC' | 'USDT'>('USDC');
+  const [walletConnected, setWalletConnected] = useState(false);
+  const [userAddress, setUserAddress] = useState<string>('');
+  const [gasEstimate, setGasEstimate] = useState<string>('');
+  const [status, setStatus] = useState<{ message: string; type: 'info' | 'success' | 'error' | 'warning' }>({ message: '', type: 'info' });
+  const [depositConfig, setDepositConfig] = useState<DepositConfig | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const faucetMutation = useMutation({
-    mutationFn: async (amount: string) => {
-      if (!user?.id) throw new Error('User not authenticated');
-      const response = await apiRequest('POST', `/api/users/${user.id}/faucet`, {
-        amount: amount
+  // ERC20 ABI (minimal for transfer)
+  const ERC20_ABI = [
+    'function balanceOf(address owner) view returns (uint256)',
+    'function transfer(address to, uint256 amount) returns (bool)',
+    'function decimals() view returns (uint8)',
+    'function symbol() view returns (string)'
+  ];
+
+  // Load deposit configuration on component mount
+  useEffect(() => {
+    const loadDepositConfig = async () => {
+      try {
+        const response = await fetch('/api/deposits/config', {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        if (response.status === 401) {
+          showStatus('Please sign in to access deposit features', 'warning');
+          return;
+        }
+        
+        const config = await response.json();
+        setDepositConfig(config);
+      } catch (error) {
+        console.error('Failed to load deposit config:', error);
+        showStatus('Failed to load deposit configuration', 'error');
+      }
+    };
+
+    if (user) {
+      loadDepositConfig();
+    }
+  }, [user]);
+
+  // Helper function to show status
+  const showStatus = (message: string, type: 'info' | 'success' | 'error' | 'warning') => {
+    setStatus({ message, type });
+  };
+
+  // Connect to MetaMask wallet
+  const connectWallet = async () => {
+    try {
+      // Check if MetaMask is installed
+      if (!window.ethereum) {
+        showStatus('MetaMask not detected. Please install MetaMask.', 'error');
+        const confirmInstall = confirm('No wallet detected. Install MetaMask?');
+        if (confirmInstall) {
+          window.open('https://metamask.io/download/', '_blank');
+        }
+        return;
+      }
+
+      showStatus('🔄 Requesting wallet connection...', 'info');
+
+      // Request account access
+      const accounts = await window.ethereum.request({
+        method: 'eth_requestAccounts'
       });
-      return response.json();
-    },
-    onSuccess: (data) => {
-      toast({
-        title: "Test USDC Added",
-        description: data.message,
+
+      if (!accounts || accounts.length === 0) {
+        showStatus('No accounts found. Please unlock your wallet and try again.', 'error');
+        return;
+      }
+
+      const address = accounts[0];
+      setUserAddress(address);
+      setWalletConnected(true);
+      showStatus(`✅ Wallet connected: ${address.substring(0, 6)}...${address.substring(38)}`, 'success');
+
+      // ENFORCE Ethereum mainnet (security requirement)
+      const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+      if (chainId !== '0x1') {
+        showStatus('❌ Must use Ethereum Mainnet. Please switch networks in MetaMask.', 'error');
+        setWalletConnected(false);
+        setUserAddress('');
+        return;
+      }
+
+    } catch (error: any) {
+      console.error('Wallet connection error:', error);
+      if (error.code === -32002) {
+        showStatus('⏳ Connection already pending. Check your wallet popup!', 'warning');
+      } else if (error.code === 4001) {
+        showStatus('❌ Connection cancelled by user', 'error');
+      } else {
+        showStatus('Failed to connect wallet. Please try again.', 'error');
+      }
+    }
+  };
+
+  // Estimate gas fee using proper ethers
+  const estimateGasFee = async () => {
+    if (!walletConnected || !window.ethereum || !depositAmount || !depositConfig) return;
+
+    try {
+      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const gasPrice = await provider.getGasPrice();
+      const gasLimit = 65000; // Typical for ERC20 transfer
+      
+      const gasCost = gasPrice.mul(gasLimit);
+      const gasCostEth = ethers.utils.formatEther(gasCost);
+      
+      setGasEstimate(`~${parseFloat(gasCostEth).toFixed(6)} ETH`);
+    } catch (error) {
+      console.error('Gas estimation error:', error);
+      setGasEstimate('Unable to estimate');
+    }
+  };
+
+  // Send payment with secure server configuration
+  const sendPayment = async () => {
+    if (!walletConnected || !window.ethereum || !user?.id || !depositAmount || !depositConfig) {
+      showStatus('❌ Please connect wallet and enter amount', 'error');
+      return;
+    }
+
+    const parsedAmount = parseFloat(depositAmount);
+    if (parsedAmount < depositConfig.minAmount) {
+      showStatus(`❌ Minimum deposit is ${depositConfig.minAmount} ${selectedToken}`, 'error');
+      return;
+    }
+
+    // ENFORCE mainnet before transaction (critical security)
+    const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+    if (chainId !== '0x1') {
+      showStatus('❌ Must use Ethereum Mainnet. Please switch networks.', 'error');
+      return;
+    }
+
+    try {
+      showStatus('🔄 Preparing transaction...', 'info');
+
+      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const signer = provider.getSigner();
+      
+      // Use ONLY server-controlled configuration (NO hardcoded fallbacks)
+      const recipientAddress = depositConfig.recipientAddress;
+      const tokenInfo = depositConfig.allowedTokens[selectedToken];
+      
+      if (!recipientAddress || !tokenInfo) {
+        showStatus('❌ Invalid deposit configuration', 'error');
+        return;
+      }
+      
+      // Use server-validated token contract and decimals
+      const amount = ethers.utils.parseUnits(depositAmount, tokenInfo.decimals);
+      const tokenContract = new ethers.Contract(tokenInfo.address, ERC20_ABI, signer);
+      
+      showStatus('🔄 Sending transaction...', 'info');
+      
+      // Send transaction to server-validated recipient only
+      const tx = await tokenContract.transfer(recipientAddress, amount);
+
+      showStatus('⏳ Transaction submitted. Waiting for confirmation...', 'warning');
+      
+      // Store pending deposit with minimal client data (server validates everything)
+      await apiRequest('POST', '/api/deposits/pending', {
+        transactionHash: tx.hash,
+        tokenType: selectedToken,
+        amount: depositAmount,
+        chainId: depositConfig.chainId
       });
-      setIsFaucetOpen(false);
-      setFaucetAmount('100');
-      queryClient.invalidateQueries({ queryKey: ['/api/users', user?.id, 'balance'] });
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Failed to Add Test USDC",
-        description: error.message || "Something went wrong. Please try again.",
-        variant: "destructive",
-      });
-    },
-  });
+
+      // Wait for transaction confirmation
+      const receipt = await tx.wait();
+      
+      if (receipt.status === 1) {
+        showStatus('✅ Transaction confirmed! Funds will be credited shortly.', 'success');
+        toast({
+          title: "Deposit Submitted",
+          description: `${depositAmount} ${selectedToken} deposit submitted. Funds will be credited after blockchain confirmation.`,
+        });
+        
+        // Reset form
+        setDepositAmount('100');
+        setIsAddFundsOpen(false);
+        
+        // Refresh balance (will update when background service processes the deposit)
+        queryClient.invalidateQueries({ queryKey: ['/api/users', user?.id, 'balance'] });
+      } else {
+        showStatus('❌ Transaction failed', 'error');
+      }
+
+    } catch (error: any) {
+      console.error('Payment error:', error);
+      if (error.code === 4001) {
+        showStatus('❌ Transaction cancelled by user', 'error');
+      } else if (error.message?.includes('insufficient funds')) {
+        showStatus('❌ Insufficient funds for gas fee', 'error');
+      } else {
+        showStatus('❌ Transaction failed. Please try again.', 'error');
+      }
+    }
+  };
+
+  // Update gas estimate when amount or token changes
+  useEffect(() => {
+    if (walletConnected && depositAmount) {
+      estimateGasFee();
+    }
+  }, [walletConnected, depositAmount, selectedToken]);
 
   const getUserNavItems = () => [
     { path: "/", label: "Markets", id: "markets" },
@@ -120,56 +308,120 @@ export function Navigation() {
             )}
             
             {user && (
-              <Dialog open={isFaucetOpen} onOpenChange={setIsFaucetOpen}>
+              <Dialog open={isAddFundsOpen} onOpenChange={setIsAddFundsOpen}>
                 <DialogTrigger asChild>
                   <Button
                     variant="default"
                     size="sm"
                     className="bg-accent hover:bg-accent/90 text-accent-foreground"
-                    data-testid="add-test-usdc-btn"
+                    data-testid="add-funds-btn"
                   >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Test USDC
+                    <Wallet className="w-4 h-4 mr-2" />
+                    Add Funds
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-md">
+                <DialogContent className="sm:max-w-lg">
                   <DialogHeader>
-                    <DialogTitle>Add Test USDC</DialogTitle>
+                    <DialogTitle>Add Funds with Cryptocurrency</DialogTitle>
                     <DialogDescription>
-                      Add test USDC to your balance for prediction market testing
+                      Deposit USDC or USDT from your Ethereum wallet to fund your prediction market account
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4">
-                    <div>
-                      <Label htmlFor="faucet-amount">Amount (USDC)</Label>
-                      <Input
-                        id="faucet-amount"
-                        type="number"
-                        min="1"
-                        max="1000"
-                        placeholder="100"
-                        value={faucetAmount}
-                        onChange={(e) => setFaucetAmount(e.target.value)}
-                        data-testid="faucet-amount-input"
-                      />
-                      <div className="text-xs text-muted-foreground mt-1">
-                        Maximum: 1,000 USDC per request • Max balance: 10,000 USDC
+                    {/* Wallet Connection Status */}
+                    {!walletConnected ? (
+                      <div className="text-center py-4">
+                        <Button 
+                          onClick={connectWallet} 
+                          className="w-full"
+                          data-testid="connect-wallet-btn"
+                        >
+                          <Wallet className="w-4 h-4 mr-2" />
+                          Connect MetaMask
+                        </Button>
                       </div>
-                    </div>
+                    ) : (
+                      <>
+                        <div className="bg-muted/50 p-3 rounded-lg">
+                          <div className="text-sm text-muted-foreground">Connected Wallet:</div>
+                          <div className="font-mono text-sm">{userAddress.substring(0, 6)}...{userAddress.substring(38)}</div>
+                        </div>
+
+                        {/* Token Selection */}
+                        <div>
+                          <Label htmlFor="token-select">Select Token</Label>
+                          <Select value={selectedToken} onValueChange={(value) => setSelectedToken(value as 'USDC' | 'USDT')}>
+                            <SelectTrigger id="token-select" data-testid="token-select">
+                              <SelectValue placeholder="Select token" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="USDC">USDC</SelectItem>
+                              <SelectItem value="USDT">USDT</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {/* Amount Input */}
+                        <div>
+                          <Label htmlFor="deposit-amount">Amount to Deposit</Label>
+                          <Input
+                            id="deposit-amount"
+                            type="number"
+                            min="1"
+                            placeholder="100"
+                            value={depositAmount}
+                            onChange={(e) => setDepositAmount(e.target.value)}
+                            data-testid="deposit-amount-input"
+                          />
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Minimum: 1 {selectedToken} • Real cryptocurrency deposits from Ethereum mainnet
+                          </div>
+                        </div>
+
+                        {/* Gas Fee Estimation */}
+                        {gasEstimate && (
+                          <div className="bg-muted/50 p-3 rounded-lg">
+                            <div className="text-sm text-muted-foreground">Estimated Gas Fee:</div>
+                            <div className="font-medium">{gasEstimate}</div>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {/* Status Messages */}
+                    {status.message && (
+                      <div className={`p-3 rounded-lg text-sm ${
+                        status.type === 'success' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
+                        status.type === 'error' ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' :
+                        status.type === 'warning' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' :
+                        'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+                      }`} data-testid="status-message">
+                        {status.message}
+                      </div>
+                    )}
+
+                    {/* Action Buttons */}
                     <div className="flex justify-end space-x-3">
                       <Button
                         variant="outline" 
-                        onClick={() => setIsFaucetOpen(false)}
+                        onClick={() => {
+                          setIsAddFundsOpen(false);
+                          setStatus({ message: '', type: 'info' });
+                          setWalletConnected(false);
+                          setUserAddress('');
+                        }}
                       >
                         Cancel
                       </Button>
-                      <Button
-                        onClick={() => faucetMutation.mutate(faucetAmount)}
-                        disabled={!faucetAmount || parseFloat(faucetAmount) <= 0 || faucetMutation.isPending}
-                        data-testid="faucet-confirm-btn"
-                      >
-                        {faucetMutation.isPending ? 'Adding...' : `Add $${faucetAmount || '0'}`}
-                      </Button>
+                      {walletConnected && (
+                        <Button
+                          onClick={sendPayment}
+                          disabled={!depositAmount || parseFloat(depositAmount) < 1}
+                          data-testid="send-payment-btn"
+                        >
+                          Send {depositAmount || '0'} {selectedToken}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </DialogContent>
