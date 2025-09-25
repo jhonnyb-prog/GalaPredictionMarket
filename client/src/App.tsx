@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Navigation } from "@/components/navigation";
 import { WalletConnection } from "@/components/wallet-connection";
+import { Footer } from "@/components/footer";
 import { UserProvider } from "@/contexts/UserContext";
 import { RoleProvider } from "@/contexts/RoleContext";
 import Home from "@/pages/home";
@@ -47,9 +48,12 @@ function App() {
       <UserProvider>
         <RoleProvider>
           <TooltipProvider>
-            <div className="min-h-screen bg-background text-foreground">
+            <div className="min-h-screen bg-background text-foreground flex flex-col">
               <Navigation />
-              <Router />
+              <main className="flex-1">
+                <Router />
+              </main>
+              <Footer />
               <WalletConnection />
             </div>
             <Toaster />
