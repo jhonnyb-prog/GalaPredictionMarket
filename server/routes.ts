@@ -17,6 +17,7 @@ import { randomBytes } from 'node:crypto';
 import rateLimit from 'express-rate-limit';
 import { z } from "zod";
 import { IStorage } from "./storage";
+import { auth, requiresAuth } from 'express-openid-connect';
 import publicApiRouter from "./publicApi";
 import { ethers } from "ethers";
 import cors from "cors";
@@ -194,6 +195,25 @@ async function updateMarketPrices(
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  
+  // Auth0 configuration
+  const config = {
+    authRequired: false,
+    auth0Logout: true,
+    secret: process.env.AUTH0_SECRET,
+    baseURL: process.env.AUTH0_BASE_URL || 'http://localhost:5000',
+    clientID: process.env.AUTH0_CLIENT_ID,
+    issuerBaseURL: `https://${process.env.AUTH0_DOMAIN}`,
+    routes: {
+      login: '/auth/login',
+      logout: '/auth/logout',
+      callback: '/auth/callback'
+    }
+  };
+  
+  // Apply Auth0 middleware
+  app.use(auth(config));
+  
   // Apply CSRF protection to all state-changing routes (critical security)
   app.use(csrfProtection);
   
@@ -224,35 +244,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/auth/me", async (req, res) => {
+  app.get("/api/auth/me", async (req: any, res) => {
     try {
-      if (!req.session.userId) {
-        // Return 401 for unauthenticated users - don't auto-create guests
-        return res.status(401).json({ error: "Not authenticated" });
+      // Check if user is authenticated via Auth0
+      if (req.oidc && req.oidc.isAuthenticated()) {
+        const auth0User = req.oidc.user;
+        
+        // Find or create user based on Auth0 profile
+        let user = await storage.getUserByEmail(auth0User.email);
+        if (!user) {
+          // Create new user from Auth0 profile
+          user = await storage.createUser({
+            email: auth0User.email,
+            username: auth0User.nickname || auth0User.name || auth0User.email.split('@')[0],
+            emailVerified: auth0User.email_verified || false,
+            status: 'active',
+          });
+        }
+        
+        // Set session for compatibility with existing code
+        req.session.userId = user.id;
+        
+        return res.json({ 
+          user,
+          isAdmin: req.session.isAdmin === true 
+        });
       }
       
-      const user = await storage.getUser(req.session.userId);
-      if (!user) {
-        req.session.userId = undefined;
-        return res.status(401).json({ error: "User not found" });
+      // Fall back to session-based auth for existing users
+      if (req.session.userId) {
+        const user = await storage.getUser(req.session.userId);
+        if (user) {
+          return res.json({ 
+            user,
+            isAdmin: req.session.isAdmin === true 
+          });
+        }
       }
       
-      res.json({ 
-        user,
-        isAdmin: req.session.isAdmin === true 
-      });
+      // Not authenticated
+      return res.status(401).json({ error: "Not authenticated" });
     } catch (error) {
-      res.status(500).json({ error: "Failed to get user session" });
+      console.error('Auth error:', error);
+      res.status(500).json({ error: "Authentication failed" });
     }
   });
 
-  app.post("/api/auth/logout", async (req, res) => {
-    req.session.destroy((err) => {
-      if (err) {
-        return res.status(500).json({ error: "Failed to logout" });
+  app.post("/api/auth/logout", async (req: any, res) => {
+    try {
+      // Logout from Auth0 if authenticated
+      if (req.oidc && req.oidc.isAuthenticated()) {
+        // Auth0 logout will be handled by the middleware
+        // Just destroy session for compatibility
+        req.session.destroy((err: any) => {
+          if (err) {
+            console.error('Session destroy error:', err);
+          }
+        });
+        return res.redirect('/auth/logout');
       }
-      res.json({ message: "Logged out successfully" });
-    });
+      
+      // Regular session logout for fallback users
+      req.session.destroy((err: any) => {
+        if (err) {
+          return res.status(500).json({ error: "Failed to logout" });
+        }
+        res.json({ message: "Logged out successfully" });
+      });
+    } catch (error) {
+      console.error('Logout error:', error);
+      res.status(500).json({ error: "Logout failed" });
+    }
   });
 
   // Admin role toggle (for development/demo - in production use database roles)

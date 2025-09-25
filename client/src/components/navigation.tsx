@@ -482,16 +482,11 @@ export function Navigation() {
               </DropdownMenu>
             ) : (
               <div className="hidden sm:flex items-center space-x-2">
-                <Link href="/login">
+                <a href="/auth/login">
                   <Button variant="ghost" size="sm" data-testid="nav-login">
-                    Sign In
+                    Sign In with Auth0
                   </Button>
-                </Link>
-                <Link href="/signup">
-                  <Button size="sm" data-testid="nav-signup">
-                    Sign Up
-                  </Button>
-                </Link>
+                </a>
               </div>
             )}
             
@@ -523,16 +518,11 @@ export function Navigation() {
                     <div className="bg-card border border-border rounded-lg p-4">
                       <div className="text-sm font-medium mb-3">Get Started</div>
                       <div className="flex flex-col space-y-2">
-                        <Link href="/login" onClick={() => setIsOpen(false)}>
+                        <a href="/auth/login" onClick={() => setIsOpen(false)}>
                           <Button variant="outline" className="w-full" data-testid="nav-mobile-login">
-                            Sign In
+                            Sign In with Auth0
                           </Button>
-                        </Link>
-                        <Link href="/signup" onClick={() => setIsOpen(false)}>
-                          <Button className="w-full" data-testid="nav-mobile-signup">
-                            Sign Up
-                          </Button>
-                        </Link>
+                        </a>
                       </div>
                     </div>
                   ) : (
