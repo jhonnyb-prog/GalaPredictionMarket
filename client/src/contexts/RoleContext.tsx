@@ -16,28 +16,14 @@ const RoleContext = createContext<RoleContextType | undefined>(undefined);
 
 export function RoleProvider({ children }: { children: React.ReactNode }) {
   const { isAdmin: serverIsAdmin, user } = useUser();
-  const queryClient = useQueryClient();
   
-  // Use server admin status as source of truth
+  // Use server admin status as source of truth (database-driven)
   const isAdmin = serverIsAdmin && !!user; // Only show admin if authenticated
   const role: UserRole = isAdmin ? 'admin' : 'user';
 
+  // Removed setRole functionality - roles are now database-managed by admins only
   const setRole = async (newRole: UserRole) => {
-    if (!user) return; // Can't change role if not logged in
-    
-    try {
-      const isAdminRole = newRole === 'admin';
-      
-      // Update role on server
-      await apiRequest('POST', '/api/auth/role', {
-        isAdmin: isAdminRole
-      });
-      
-      // Refetch user data to update admin status
-      await queryClient.invalidateQueries({ queryKey: ['/api/auth/me'] });
-    } catch (error) {
-      console.error('Failed to update role:', error);
-    }
+    console.warn('Role changes are now managed by administrators only');
   };
 
   const value = {
