@@ -10,9 +10,10 @@ import { PositionData, TradeData, OrderData } from "@/types/market";
 import { useCurrentUserId } from "@/contexts/UserContext";
 
 export default function Portfolio() {
-  const [activeTab, setActiveTab] = useState<'positions' | 'history' | 'orders' | 'withdraw'>('positions');
+  const [activeTab, setActiveTab] = useState<'positions' | 'history' | 'orders' | 'withdraw' | 'apikeys'>('positions');
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [galachainAddress, setGalachainAddress] = useState('');
+  const [showApiKeySecret, setShowApiKeySecret] = useState<string | null>(null);
   const currentUserId = useCurrentUserId();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -33,6 +34,53 @@ export default function Portfolio() {
     queryKey: ['/api/users', currentUserId, 'balance'],
   });
 
+  const { data: apiKeys = [] } = useQuery<any[]>({
+    queryKey: ['/api/me/apikeys'],
+    enabled: activeTab === 'apikeys',
+  });
+
+  const createApiKeyMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', '/api/me/apikeys', {});
+      return response.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "API Key Created",
+        description: "Your API key has been generated successfully. Save the signing secret shown below - it will not be displayed again.",
+      });
+      setShowApiKeySecret(data.apiKey.signingSecret);
+      queryClient.invalidateQueries({ queryKey: ['/api/me/apikeys'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "API Key Creation Failed",
+        description: error.message || "Failed to create API key. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteApiKeyMutation = useMutation({
+    mutationFn: async (keyId: string) => {
+      const response = await apiRequest('DELETE', `/api/me/apikeys/${keyId}`, {});
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "API Key Deleted",
+        description: "API key has been deleted successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/me/apikeys'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Deletion Failed",
+        description: error.message || "Failed to delete API key. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
 
   const resetBalanceMutation = useMutation({
     mutationFn: async () => {
@@ -84,7 +132,8 @@ export default function Portfolio() {
     { id: 'positions', label: 'Positions' },
     { id: 'history', label: 'History' },
     { id: 'orders', label: 'Orders' },
-    { id: 'withdraw', label: 'Withdraw' }
+    { id: 'withdraw', label: 'Withdraw' },
+    { id: 'apikeys', label: 'API Keys' }
   ] as const;
 
   const calculatePortfolioValue = () => {
@@ -418,6 +467,193 @@ export default function Portfolio() {
                     >
                       {withdrawMutation.isPending ? 'Processing...' : `Withdraw $${withdrawAmount || '0'} USDC`}
                     </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* API Keys Tab */}
+          {activeTab === 'apikeys' && (
+            <div className="p-6 space-y-6">
+              <div className="max-w-4xl">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-xl font-semibold text-foreground">API Keys</h3>
+                    <p className="text-muted-foreground">
+                      Generate API keys to access GalaMarket programmatically. Keys include read and trade permissions.
+                    </p>
+                  </div>
+                  <Button 
+                    onClick={() => createApiKeyMutation.mutate()}
+                    disabled={createApiKeyMutation.isPending}
+                    data-testid="generate-api-key-btn"
+                    className="bg-chart-1 hover:bg-chart-1/90"
+                  >
+                    {createApiKeyMutation.isPending ? 'Generating...' : '🔑 Generate API Key'}
+                  </Button>
+                </div>
+
+                {/* Show signing secret immediately after creation */}
+                {showApiKeySecret && (
+                  <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 mb-6">
+                    <div className="flex items-start space-x-3">
+                      <div className="w-5 h-5 bg-yellow-500 rounded-full flex items-center justify-center mt-0.5">
+                        <span className="text-white text-xs font-bold">!</span>
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">
+                          Save Your Signing Secret - This Will Not Be Shown Again!
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 border rounded-lg p-3 mb-3 font-mono text-sm break-all">
+                          {showApiKeySecret}
+                        </div>
+                        <div className="text-sm text-yellow-700 dark:text-yellow-300 space-y-1">
+                          <p>• Copy this signing secret to a secure location</p>
+                          <p>• You'll need both the API Key ID and signing secret for API access</p>
+                          <p>• The signing secret cannot be retrieved after closing this message</p>
+                        </div>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="mt-3"
+                          onClick={() => setShowApiKeySecret(null)}
+                        >
+                          I've Saved It - Close This Message
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* API Keys List */}
+                <div className="bg-card border border-border rounded-lg overflow-hidden">
+                  {apiKeys.length === 0 ? (
+                    <div className="text-center py-12">
+                      <div className="text-4xl mb-4">🔑</div>
+                      <div className="text-lg font-medium text-foreground mb-2">No API Keys Yet</div>
+                      <div className="text-muted-foreground mb-4">
+                        Generate your first API key to start using the GalaMarket API
+                      </div>
+                      <Button 
+                        onClick={() => createApiKeyMutation.mutate()}
+                        disabled={createApiKeyMutation.isPending}
+                        className="bg-chart-1 hover:bg-chart-1/90"
+                      >
+                        {createApiKeyMutation.isPending ? 'Generating...' : 'Generate Your First API Key'}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead className="bg-muted/50">
+                          <tr>
+                            <th className="text-left p-4 text-sm font-medium text-muted-foreground">API Key ID</th>
+                            <th className="text-left p-4 text-sm font-medium text-muted-foreground">Label</th>
+                            <th className="text-left p-4 text-sm font-medium text-muted-foreground">Scopes</th>
+                            <th className="text-left p-4 text-sm font-medium text-muted-foreground">Status</th>
+                            <th className="text-left p-4 text-sm font-medium text-muted-foreground">Last Used</th>
+                            <th className="text-left p-4 text-sm font-medium text-muted-foreground">Created</th>
+                            <th className="text-left p-4 text-sm font-medium text-muted-foreground">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {apiKeys.map((apiKey: any) => (
+                            <tr key={apiKey.id} className="border-t border-border">
+                              <td className="p-4">
+                                <div className="font-mono text-sm text-foreground">
+                                  {apiKey.id}
+                                </div>
+                              </td>
+                              <td className="p-4 text-foreground">{apiKey.label}</td>
+                              <td className="p-4">
+                                <div className="flex gap-1">
+                                  {apiKey.scopes.map((scope: string) => (
+                                    <span 
+                                      key={scope}
+                                      className="px-2 py-1 bg-chart-1/20 text-chart-1 rounded-md text-xs font-medium"
+                                    >
+                                      {scope}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="p-4">
+                                <span className={`px-2 py-1 rounded-md text-xs font-medium ${
+                                  apiKey.status === 'active' 
+                                    ? 'bg-chart-1/20 text-chart-1' 
+                                    : 'bg-destructive/20 text-destructive'
+                                }`}>
+                                  {apiKey.status.toUpperCase()}
+                                </span>
+                              </td>
+                              <td className="p-4 text-foreground text-sm">
+                                {apiKey.lastUsedAt 
+                                  ? new Date(apiKey.lastUsedAt).toLocaleDateString()
+                                  : 'Never'
+                                }
+                              </td>
+                              <td className="p-4 text-foreground text-sm">
+                                {new Date(apiKey.createdAt).toLocaleDateString()}
+                              </td>
+                              <td className="p-4">
+                                <Dialog>
+                                  <DialogTrigger asChild>
+                                    <Button 
+                                      variant="outline" 
+                                      size="sm" 
+                                      className="text-destructive hover:text-destructive"
+                                    >
+                                      Delete
+                                    </Button>
+                                  </DialogTrigger>
+                                  <DialogContent>
+                                    <DialogHeader>
+                                      <DialogTitle>Delete API Key</DialogTitle>
+                                      <DialogDescription>
+                                        Are you sure you want to delete this API key? This action cannot be undone and will immediately revoke access for any applications using this key.
+                                      </DialogDescription>
+                                    </DialogHeader>
+                                    <div className="flex justify-end space-x-3 pt-4">
+                                      <DialogTrigger asChild>
+                                        <Button variant="outline">Cancel</Button>
+                                      </DialogTrigger>
+                                      <Button 
+                                        variant="destructive"
+                                        onClick={() => deleteApiKeyMutation.mutate(apiKey.id)}
+                                        disabled={deleteApiKeyMutation.isPending}
+                                      >
+                                        {deleteApiKeyMutation.isPending ? 'Deleting...' : 'Delete API Key'}
+                                      </Button>
+                                    </div>
+                                  </DialogContent>
+                                </Dialog>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* API Documentation Link */}
+                <div className="bg-muted/10 border border-muted rounded-lg p-4">
+                  <div className="flex items-start space-x-3">
+                    <div className="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center mt-0.5">
+                      <span className="text-white text-xs font-bold">i</span>
+                    </div>
+                    <div>
+                      <div className="font-medium text-foreground mb-1">API Documentation</div>
+                      <div className="text-sm text-muted-foreground mb-3">
+                        Learn how to use your API keys to access markets, place orders, and manage your account programmatically.
+                      </div>
+                      <Button variant="outline" size="sm" asChild>
+                        <a href="/docs/api" target="_blank" rel="noopener noreferrer">
+                          View API Documentation →
+                        </a>
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>

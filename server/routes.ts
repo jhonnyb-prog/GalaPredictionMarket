@@ -1235,6 +1235,108 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // User API Key Management (Non-Admin)
+  app.post("/api/me/apikeys", requireAuth, async (req, res) => {
+    try {
+      const { generateApiKey, generateSigningSecret } = await import("./publicApiMiddleware");
+      
+      // Use default values for user-generated API keys
+      const keyData = {
+        userId: req.session.userId,
+        label: req.body.label || `API Key ${new Date().toLocaleDateString()}`,
+        scopes: ['read', 'trade'], // Users get read and trade by default
+        rateLimitTier: 1, // Basic tier for regular users
+        expiresAt: null, // No expiration by default
+      };
+      
+      // Validate input
+      const validatedData = insertApiKeySchema.parse(keyData);
+      
+      // Generate secure keys
+      const keyId = generateApiKey();
+      const signingSecret = generateSigningSecret();
+      
+      // Create API key in database
+      const newApiKey = await storage.createApiKey({
+        ...validatedData,
+        id: keyId,
+        signingSecret: signingSecret,
+      });
+      
+      // Return API key details (including the signing secret for one-time display)
+      res.status(201).json({
+        success: true,
+        apiKey: {
+          id: newApiKey.id,
+          label: newApiKey.label,
+          scopes: newApiKey.scopes,
+          status: newApiKey.status,
+          rateLimitTier: newApiKey.rateLimitTier,
+          expiresAt: newApiKey.expiresAt,
+          createdAt: newApiKey.createdAt,
+          signingSecret: signingSecret, // IMPORTANT: Only shown once
+        },
+        message: "API key created successfully. Please save the signing secret as it will not be shown again."
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          error: "Invalid API key data", 
+          details: error.errors 
+        });
+      }
+      console.error("User API key creation error:", error);
+      res.status(500).json({ error: "Failed to create API key" });
+    }
+  });
+
+  app.get("/api/me/apikeys", requireAuth, async (req, res) => {
+    try {
+      // Get API keys for current user (without signing secrets)
+      const apiKeys = await storage.getUserApiKeys(req.session.userId);
+      
+      // Remove signing secrets from response for security
+      const safeApiKeys = apiKeys.map(key => ({
+        id: key.id,
+        label: key.label,
+        scopes: key.scopes,
+        status: key.status,
+        rateLimitTier: key.rateLimitTier,
+        expiresAt: key.expiresAt,
+        lastUsedAt: key.lastUsedAt,
+        createdAt: key.createdAt,
+        updatedAt: key.updatedAt,
+      }));
+      
+      res.json({ apiKeys: safeApiKeys });
+    } catch (error) {
+      console.error("User API key listing error:", error);
+      res.status(500).json({ error: "Failed to retrieve API keys" });
+    }
+  });
+
+  app.delete("/api/me/apikeys/:id", requireAuth, async (req, res) => {
+    try {
+      const keyId = req.params.id;
+      
+      // Verify the API key belongs to the current user
+      const apiKey = await storage.getApiKey(keyId);
+      if (!apiKey || apiKey.userId !== req.session.userId) {
+        return res.status(404).json({ error: "API key not found" });
+      }
+      
+      await storage.deleteApiKey(keyId);
+      
+      res.json({
+        success: true,
+        message: "API key deleted successfully"
+      });
+    } catch (error) {
+      console.error("User API key deletion error:", error);
+      res.status(500).json({ error: "Failed to delete API key" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
