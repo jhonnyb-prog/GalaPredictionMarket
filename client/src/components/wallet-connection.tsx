@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { galaChainProvider } from "@/lib/galachain";
+import { ethereumWalletProvider } from "@/lib/galachain";
 import { apiRequest } from "@/lib/queryClient";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -49,8 +49,8 @@ export function WalletConnection() {
   const connectWallet = async (walletType: string) => {
     setIsConnecting(true);
     try {
-      // Connect to GalaChain (mock for now)
-      const wallet = await galaChainProvider.connect();
+      // Connect to real Ethereum wallet
+      const wallet = await ethereumWalletProvider.connect();
       
       // Create or get user
       const response = await apiRequest('POST', '/api/users', {

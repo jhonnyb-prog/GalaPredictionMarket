@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Payment POC - Learning Implementation</title>
+    <!-- Load Ethers.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .config-section {
+            background: #f0f0f0;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .config-section h3 {
+            margin-top: 0;
+            color: #555;
+        }
+        .config-section code {
+            background: #fff;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+        .status.info {
+            background: #e3f2fd;
+            color: #1976d2;
+            display: block;
+        }
+        .status.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            display: block;
+        }
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+            display: block;
+        }
+        .status.warning {
+            background: #fff3e0;
+            color: #f57c00;
+            display: block;
+        }
+        .gas-info {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        .tx-info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f0f7ff;
+            border-radius: 8px;
+            display: none;
+        }
+        .tx-info label {
+            font-weight: bold;
+            color: #1976d2;
+        }
+        .tx-hash {
+            word-break: break-all;
+            font-family: monospace;
+            font-size: 12px;
+            margin: 5px 0;
+        }
+        .etherscan-link {
+            color: #1976d2;
+            text-decoration: none;
+            word-break: break-all;
+            font-size: 12px;
+        }
+        .etherscan-link:hover {
+            text-decoration: underline;
+        }
+        .decode-section {
+            margin-top: 20px;
+            padding: 15px;
+            background: #fffbf0;
+            border-radius: 8px;
+            border: 1px solid #ffd54f;
+        }
+        .decode-section h4 {
+            margin-top: 0;
+            color: #f57c00;
+        }
+        .decode-section pre {
+            background: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Crypto Payment POC</h1>
+        <div class="subtitle">Educational Implementation - Ethereum Mainnet</div>
+        
+        <div class="config-section">
+            <h3>⚙️ Configuration</h3>
+            <p><strong>Recipient Address:</strong> <code id="recipientDisplay">Not set</code></p>
+            <p style="font-size: 12px; color: #666;">Change the RECIPIENT_ADDRESS variable in the code to set your receiving wallet</p>
+        </div>
+
+        <div class="form-group">
+            <label for="amount">Amount to Send:</label>
+            <input type="number" id="amount" placeholder="Enter amount (e.g., 10)" step="0.000001" min="0">
+        </div>
+
+        <div class="form-group">
+            <label for="token">Select Token:</label>
+            <select id="token">
+                <option value="">-- Select Token --</option>
+                <option value="USDC">USDC</option>
+                <option value="USDT">USDT</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="message">Message (will be encoded in transaction):</label>
+            <input type="text" id="message" placeholder="Enter message (e.g., userID_12345)">
+        </div>
+
+        <button id="connectBtn" onclick="connectWallet()">Connect MetaMask</button>
+        <button id="goBtn" onclick="sendPayment()" style="display:none;">Go - Send Payment</button>
+
+        <div id="gasInfo" class="gas-info" style="display:none;">
+            <strong>⛽ Estimated Gas Fee:</strong> <span id="gasEstimate">Calculating...</span>
+        </div>
+
+        <div id="status" class="status"></div>
+
+        <div id="txInfo" class="tx-info">
+            <label>Transaction Hash:</label>
+            <div class="tx-hash" id="txHash"></div>
+            <label>Etherscan Link:</label>
+            <a href="#" id="etherscanLink" class="etherscan-link" target="_blank"></a>
+        </div>
+
+        <div class="decode-section">
+            <h4>📖 How to Decode Messages</h4>
+            <p>Messages are hex-encoded in the transaction data. To decode:</p>
+            <pre>// JavaScript
+const hexMessage = '0x68656c6c6f'; // from tx data
+const decoded = ethers.utils.toUtf8String(hexMessage);
+console.log(decoded); // "hello"
+
+// Or use this page's console:
+// decodeMessage('0x68656c6c6f')</pre>
+        </div>
+    </div>
+
+    <script>
+        // CONFIGURATION - Change this to your receiving wallet address
+        const RECIPIENT_ADDRESS = '0x62D7608Bd4FeC6953195daA3f8Ca70090B5Ac29a';
+        
+        // Official Token Addresses on Ethereum Mainnet
+        const TOKEN_ADDRESSES = {
+            'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+            'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7'
+        };
+
+        // Token Decimals
+        const TOKEN_DECIMALS = {
+            'USDC': 6,
+            'USDT': 6
+        };
+
+        // ERC20 ABI (minimal for transfer)
+        const ERC20_ABI = [
+            'function balanceOf(address owner) view returns (uint256)',
+            'function transfer(address to, uint256 amount) returns (bool)',
+            'function decimals() view returns (uint8)',
+            'function symbol() view returns (string)'
+        ];
+
+        let provider;
+        let signer;
+        let userAddress;
+
+        // Check if ethers is loaded
+        window.addEventListener('load', () => {
+            if (typeof ethers === 'undefined') {
+                console.error('Ethers.js not loaded! Attempting to load backup...');
+                showStatus('Loading required libraries...', 'info');
+                
+                // Backup: Try to load ethers from another CDN
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js';
+                script.onload = () => {
+                    console.log('Ethers.js loaded successfully from backup CDN');
+                    showStatus('Ready to connect', 'info');
+                };
+                script.onerror = () => {
+                    showStatus('Failed to load required libraries. Please refresh the page.', 'error');
+                };
+                document.head.appendChild(script);
+            } else {
+                console.log('Ethers.js loaded successfully');
+            }
+        });
+
+        // Display recipient address
+        document.getElementById('recipientDisplay').textContent = RECIPIENT_ADDRESS;
+
+        // Decode message helper function (available in console)
+        function decodeMessage(hexString) {
+            try {
+                const decoded = ethers.utils.toUtf8String(hexString);
+                console.log('Decoded message:', decoded);
+                return decoded;
+            } catch (error) {
+                console.error('Failed to decode:', error);
+                return null;
+            }
+        }
+
+        async function connectWallet() {
+            const statusDiv = document.getElementById('status');
+            
+            // Check if ethers is loaded
+            if (typeof ethers === 'undefined') {
+                showStatus('Libraries still loading. Please wait a moment and try again.', 'warning');
+                return;
+            }
+            
+            try {
+                // Check for Ethereum provider
+                if (!window.ethereum) {
+                    showStatus('No Ethereum wallet detected. Please install MetaMask.', 'error');
+                    const confirmInstall = confirm('No wallet detected. Install MetaMask?');
+                    if (confirmInstall) {
+                        window.open('https://metamask.io/download/', '_blank');
+                    }
+                    return;
+                }
+
+                console.log('Ethereum provider found:', window.ethereum);
+                showStatus('🔄 Requesting wallet connection...', 'info');
+
+                // Just request accounts - let the wallet selector handle which wallet to use
+                let accounts;
+                try {
+                    accounts = await window.ethereum.request({ 
+                        method: 'eth_requestAccounts' 
+                    });
+                    console.log('Accounts received:', accounts);
+                } catch (requestError) {
+                    console.error('Error requesting accounts:', requestError);
+                    
+                    // Handle specific error cases
+                    if (requestError.code === -32002) {
+                        showStatus('⏳ Connection already pending. Check your wallet popup!', 'warning');
+                        return;
+                    } else if (requestError.code === 4001) {
+                        showStatus('❌ Connection cancelled by user', 'error');
+                        return;
+                    }
+                    throw requestError;
+                }
+
+                if (!accounts || accounts.length === 0) {
+                    showStatus('No accounts found. Please unlock your wallet and try again.', 'error');
+                    // Show MetaMask direct connect button if connection failed
+                    const metaMaskBtn = document.getElementById('connectMetaMaskBtn');
+                    if (metaMaskBtn) {
+                        metaMaskBtn.style.display = 'block';
+                    }
+                    return;
+                }
+
+                // Connection successful - continue with setup
+                await setupWalletConnection(accounts);
+
+            } catch (error) {
+                console.error('Connection error:', error);
+                
+                if (error.message?.includes('No active wallet')) {
+                    showStatus('No wallet selected. You can also try the direct MetaMask connection below.', 'error');
+                    // Show MetaMask direct connect button as alternative
+                    const metaMaskBtn = document.getElementById('connectMetaMaskBtn');
+                    if (metaMaskBtn) {
+                        metaMaskBtn.style.display = 'block';
+                    }
+                } else {
+                    showStatus(`Error: ${error.message || 'Unknown error occurred'}`, 'error');
+                    // Show MetaMask button as fallback for any connection error
+                    const metaMaskBtn = document.getElementById('connectMetaMaskBtn');
+                    if (metaMaskBtn) {
+                        metaMaskBtn.style.display = 'block';
+                    }
+                }
+            }
+        }
+
+        async function connectMetaMaskDirectly() {
+            const statusDiv = document.getElementById('status');
+            
+            // Check if ethers is loaded
+            if (typeof ethers === 'undefined') {
+                showStatus('Libraries still loading. Please wait a moment and try again.', 'warning');
+                return;
+            }
+            
+            try {
+                // Try to find MetaMask specifically
+                let metamaskProvider = null;
+                
+                if (window.ethereum?.providers?.length) {
+                    // Multiple wallets installed - find MetaMask
+                    metamaskProvider = window.ethereum.providers.find(p => p.isMetaMask);
+                    if (!metamaskProvider) {
+                        showStatus('MetaMask not found. Please make sure MetaMask extension is installed.', 'error');
+                        return;
+                    }
+                } else if (window.ethereum?.isMetaMask) {
+                    // Only MetaMask installed
+                    metamaskProvider = window.ethereum;
+                } else {
+                    showStatus('MetaMask not found. Please install MetaMask extension.', 'error');
+                    return;
+                }
+
+                console.log('Found MetaMask provider:', metamaskProvider);
+                showStatus('🔄 Connecting to MetaMask directly...', 'info');
+
+                // Request accounts from MetaMask specifically
+                const accounts = await metamaskProvider.request({ 
+                    method: 'eth_requestAccounts' 
+                });
+
+                if (!accounts || accounts.length === 0) {
+                    showStatus('No accounts found in MetaMask. Please unlock MetaMask and try again.', 'error');
+                    return;
+                }
+
+                // Store the MetaMask provider globally
+                window.ethereum = metamaskProvider;
+                
+                // Connection successful - continue with setup
+                await setupWalletConnection(accounts);
+
+            } catch (error) {
+                console.error('MetaMask connection error:', error);
+                
+                if (error.code === -32002) {
+                    showStatus('⏳ MetaMask connection pending. Please check MetaMask popup!', 'warning');
+                } else if (error.code === 4001) {
+                    showStatus('❌ Connection cancelled in MetaMask', 'error');
+                } else {
+                    showStatus(`MetaMask error: ${error.message || 'Unknown error'}`, 'error');
+                }
+            }
+        }
+
+        async function setupWalletConnection(accounts) {
+            try {
+                userAddress = accounts[0];
+                console.log('Setting up wallet with account:', userAddress);
+
+                // Get the network
+                const chainId = await window.ethereum.request({ 
+                    method: 'eth_chainId' 
+                });
+                
+                console.log('Connected! Chain ID:', chainId);
+                
+                // Check for Ethereum Mainnet
+                if (chainId !== '0x1') {
+                    showStatus('⚠️ Not on Ethereum Mainnet. Switching network...', 'warning');
+                    try {
+                        await window.ethereum.request({
+                            method: 'wallet_switchEthereumChain',
+                            params: [{ chainId: '0x1' }],
+                        });
+                        showStatus('✅ Switched to Ethereum Mainnet', 'success');
+                    } catch (switchError) {
+                        console.error('Switch error:', switchError);
+                        if (switchError.code === 4902) {
+                            // Chain not added, try to add it
+                            try {
+                                await window.ethereum.request({
+                                    method: 'wallet_addEthereumChain',
+                                    params: [{
+                                        chainId: '0x1',
+                                        chainName: 'Ethereum Mainnet',
+                                        nativeCurrency: {
+                                            name: 'Ether',
+                                            symbol: 'ETH',
+                                            decimals: 18
+                                        },
+                                        rpcUrls: ['https://cloudflare-eth.com'],
+                                        blockExplorerUrls: ['https://etherscan.io']
+                                    }]
+                                });
+                            } catch (addError) {
+                                showStatus('Please manually switch to Ethereum Mainnet in your wallet', 'error');
+                                return;
+                            }
+                        } else if (switchError.code === 4001) {
+                            showStatus('Network switch cancelled. Please manually switch to Ethereum Mainnet.', 'error');
+                            return;
+                        } else {
+                            showStatus('Please manually switch to Ethereum Mainnet in your wallet settings', 'warning');
+                        }
+                    }
+                }
+
+                // Setup provider and signer with ethers
+                provider = new ethers.providers.Web3Provider(window.ethereum);
+                signer = provider.getSigner();
+
+                // Test the connection
+                try {
+                    const balance = await provider.getBalance(userAddress);
+                    console.log('ETH Balance:', ethers.utils.formatEther(balance));
+                } catch (balanceError) {
+                    console.error('Could not fetch balance:', balanceError);
+                }
+
+                // Update UI
+                document.getElementById('connectBtn').style.display = 'none';
+                
+                // Hide MetaMask button if it exists
+                const metaMaskBtn = document.getElementById('connectMetaMaskBtn');
+                if (metaMaskBtn) {
+                    metaMaskBtn.style.display = 'none';
+                }
+                
+                document.getElementById('goBtn').style.display = 'block';
+                
+                // Detect wallet type for display
+                let walletType = 'Wallet';
+                if (window.ethereum.isMetaMask) {
+                    walletType = 'MetaMask';
+                } else if (window.ethereum.isPhantom) {
+                    walletType = 'Phantom';
+                }
+                
+                showStatus(`✅ Connected via ${walletType}: ${userAddress.substring(0, 6)}...${userAddress.substring(38)}`, 'success');
+                
+                // Add event listeners for input changes (remove old ones first to avoid duplicates)
+                const amountInput = document.getElementById('amount');
+                const tokenSelect = document.getElementById('token');
+                const messageInput = document.getElementById('message');
+                
+                amountInput.removeEventListener('change', estimateGas);
+                tokenSelect.removeEventListener('change', estimateGas);
+                messageInput.removeEventListener('input', estimateGas);
+                
+                amountInput.addEventListener('change', estimateGas);
+                tokenSelect.addEventListener('change', estimateGas);
+                messageInput.addEventListener('input', estimateGas);
+
+                // Setup account change listener
+                window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+                window.ethereum.on('accountsChanged', handleAccountsChanged);
+                
+                window.ethereum.removeListener('chainChanged', handleChainChanged);
+                window.ethereum.on('chainChanged', handleChainChanged);
+
+            } catch (error) {
+                console.error('Setup error:', error);
+                showStatus(`Setup failed: ${error.message}`, 'error');
+            }
+        }
+
+        function handleChainChanged(chainId) {
+            console.log('Chain changed to:', chainId);
+            window.location.reload();
+        }
+
+        function handleAccountsChanged(accounts) {
+            if (accounts.length === 0) {
+                // User disconnected wallet
+                document.getElementById('connectBtn').style.display = 'block';
+                document.getElementById('goBtn').style.display = 'none';
+                showStatus('Wallet disconnected', 'warning');
+                userAddress = null;
+            } else if (accounts[0] !== userAddress) {
+                // User switched accounts
+                userAddress = accounts[0];
+                showStatus(`✅ Switched to: ${userAddress.substring(0, 6)}...${userAddress.substring(38)}`, 'info');
+            }
+        }
+
+        async function estimateGas() {
+            const amount = document.getElementById('amount').value;
+            const token = document.getElementById('token').value;
+            const message = document.getElementById('message').value;
+
+            if (!amount || !token || !signer) return;
+
+            try {
+                const decimals = TOKEN_DECIMALS[token];
+                const amountWei = ethers.utils.parseUnits(amount, decimals);
+                
+                // Encode the message
+                const messageHex = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(message || ''));
+                
+                // Create the transfer call data
+                const transferInterface = new ethers.utils.Interface(ERC20_ABI);
+                const transferData = transferInterface.encodeFunctionData('transfer', [
+                    RECIPIENT_ADDRESS,
+                    amountWei
+                ]);
+                
+                // Append message to transfer data
+                const fullData = transferData + messageHex.slice(2);
+                
+                // Estimate gas for the raw transaction
+                const estimatedGas = await provider.estimateGas({
+                    to: TOKEN_ADDRESSES[token],
+                    data: fullData,
+                    from: userAddress
+                });
+
+                const gasPrice = await provider.getGasPrice();
+                const gasCost = estimatedGas.mul(gasPrice);
+                const gasCostEth = ethers.utils.formatEther(gasCost);
+
+                document.getElementById('gasInfo').style.display = 'block';
+                document.getElementById('gasEstimate').textContent = 
+                    `~${parseFloat(gasCostEth).toFixed(6)} ETH (${(parseFloat(gasCostEth) * 2500).toFixed(2)} @ $2500/ETH)`;
+
+            } catch (error) {
+                console.error('Gas estimation error:', error);
+                document.getElementById('gasInfo').style.display = 'none';
+            }
+        }
+
+        async function sendPayment() {
+            const amount = document.getElementById('amount').value;
+            const token = document.getElementById('token').value;
+            const message = document.getElementById('message').value;
+            const statusDiv = document.getElementById('status');
+
+            // Check if ethers is loaded
+            if (typeof ethers === 'undefined') {
+                showStatus('Libraries not loaded. Please refresh the page.', 'error');
+                return;
+            }
+
+            // Validation
+            if (!amount || !message) {
+                showStatus('❌ Insufficient information: Please fill in amount and message fields', 'error');
+                return;
+            }
+
+            if (!token) {
+                showStatus('❌ Insufficient information: Please select a token', 'error');
+                return;
+            }
+
+            try {
+                showStatus('🔄 Checking balance...', 'info');
+
+                // Create contract instance
+                const tokenContract = new ethers.Contract(
+                    TOKEN_ADDRESSES[token],
+                    ERC20_ABI,
+                    signer
+                );
+
+                // Check balance
+                const balance = await tokenContract.balanceOf(userAddress);
+                const decimals = TOKEN_DECIMALS[token];
+                const amountWei = ethers.utils.parseUnits(amount, decimals);
+
+                if (balance.lt(amountWei)) {
+                    const balanceFormatted = ethers.utils.formatUnits(balance, decimals);
+                    showStatus(`❌ Insufficient funds. You have ${balanceFormatted} ${token}, but trying to send ${amount} ${token}`, 'error');
+                    return;
+                }
+
+                showStatus('📤 Preparing transaction... Please confirm in your wallet', 'info');
+
+                // Encode the message as hex
+                const messageHex = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(message));
+                console.log('Original message:', message);
+                console.log('Encoded message:', messageHex);
+
+                // For ERC-20 transfers, we need to encode the transfer function call
+                // and append our custom message data
+                const transferInterface = new ethers.utils.Interface(ERC20_ABI);
+                const transferData = transferInterface.encodeFunctionData('transfer', [
+                    RECIPIENT_ADDRESS,
+                    amountWei
+                ]);
+
+                // Append our message to the transfer data
+                // This creates a valid transfer call with extra data that won't affect the transfer
+                const fullData = transferData + messageHex.slice(2); // Remove '0x' from messageHex
+
+                console.log('Transaction data with message:', fullData);
+
+                // Send the raw transaction with our custom data
+                const tx = await signer.sendTransaction({
+                    to: TOKEN_ADDRESSES[token],
+                    data: fullData,
+                    // Let ethers estimate the gas limit
+                });
+
+                showStatus('⏳ Transaction submitted. Waiting for confirmation...', 'info');
+                
+                // Display transaction info immediately
+                displayTransaction(tx.hash);
+
+                // Wait for confirmation
+                const receipt = await tx.wait();
+
+                showStatus(`✅ Success! Sent ${amount} ${token} to ${RECIPIENT_ADDRESS.substring(0, 6)}...${RECIPIENT_ADDRESS.substring(38)}`, 'success');
+                
+                console.log('Transaction receipt:', receipt);
+                console.log('Message sent (encoded):', messageHex);
+                console.log('To decode the message from transaction input data:');
+                console.log('1. Get the transaction input data from Etherscan');
+                console.log('2. Remove the first 136 characters (68 bytes for function selector + recipient + amount)');
+                console.log('3. Decode the remaining hex as UTF-8');
+                console.log('Or use: decodeMessage("' + messageHex + '")');
+
+            } catch (error) {
+                console.error('Payment error:', error);
+                if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
+                    showStatus('❌ Transaction cancelled by user', 'error');
+                } else if (error.code === -32000) {
+                    showStatus('❌ Insufficient funds for gas fees', 'error');
+                } else if (error.message?.includes('insufficient funds')) {
+                    showStatus('❌ Insufficient ETH for gas fees', 'error');
+                } else {
+                    showStatus(`❌ Transaction failed: ${error.message}`, 'error');
+                }
+            }
+        }
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = 'status ' + type;
+        }
+
+        function displayTransaction(txHash) {
+            document.getElementById('txInfo').style.display = 'block';
+            document.getElementById('txHash').textContent = txHash;
+            
+            const etherscanUrl = `https://etherscan.io/tx/${txHash}`;
+            const linkElement = document.getElementById('etherscanLink');
+            linkElement.href = etherscanUrl;
+            linkElement.textContent = etherscanUrl;
+        }
+
+        // Check for wallet on page load
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                if (window.ethereum) {
+                    console.log('Ethereum provider detected on page load');
+                    console.log('Provider details:', {
+                        isMetaMask: window.ethereum.isMetaMask,
+                        isPhantom: window.ethereum.isPhantom,
+                        providers: window.ethereum.providers
+                    });
+                } else {
+                    console.log('No Ethereum provider detected on page load');
+                }
+            }, 1000);
+        });
+    </script>
+</body>
+</html>

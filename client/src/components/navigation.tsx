@@ -15,6 +15,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ethers } from "ethers";
+import { ethereumWalletProvider, detectAvailableWallets } from "@/lib/galachain";
 import type { DepositConfig } from "@shared/schema";
 
 export function Navigation() {
@@ -75,32 +76,13 @@ export function Navigation() {
     setStatus({ message, type });
   };
 
-  // Connect to MetaMask wallet and create user account
+  // Connect to MetaMask or Phantom wallet and create user account
   const connectWallet = async () => {
     try {
-      // Check if MetaMask is installed
-      if (!window.ethereum) {
-        showStatus('MetaMask not detected. Please install MetaMask.', 'error');
-        const confirmInstall = confirm('No wallet detected. Install MetaMask?');
-        if (confirmInstall) {
-          window.open('https://metamask.io/download/', '_blank');
-        }
-        return;
-      }
-
       showStatus('🔄 Connecting wallet...', 'info');
 
-      // Request account access
-      const accounts = await window.ethereum.request({
-        method: 'eth_requestAccounts'
-      });
-
-      if (!accounts || accounts.length === 0) {
-        showStatus('No accounts found. Please unlock your wallet and try again.', 'error');
-        return;
-      }
-
-      const address = accounts[0];
+      // Use the new Ethereum wallet provider for real MetaMask/Phantom connections
+      const walletInfo = await ethereumWalletProvider.connect();
       
       // Create/connect user account via backend
       const response = await fetch('/api/auth/wallet-connect', {
@@ -110,7 +92,7 @@ export function Navigation() {
         },
         credentials: 'include',
         body: JSON.stringify({
-          walletAddress: address
+          walletAddress: walletInfo.address
         })
       });
 
@@ -120,13 +102,13 @@ export function Navigation() {
         throw new Error(data.error || 'Wallet connection failed');
       }
 
-      setUserAddress(address);
+      setUserAddress(walletInfo.address);
       setWalletConnected(true);
-      showStatus(`✅ ${data.message}`, 'success');
+      showStatus(`✅ Connected via ${walletInfo.walletType} - ${data.message}`, 'success');
       
       toast({
-        title: "Wallet Connected!",
-        description: "You can now trade prediction markets with your starting balance.",
+        title: `${walletInfo.walletType === 'metamask' ? 'MetaMask' : 'Phantom'} Connected!`,
+        description: "You can now add funds and trade prediction markets.",
       });
 
       // Refresh user data
@@ -134,27 +116,31 @@ export function Navigation() {
 
     } catch (error: any) {
       console.error('Wallet connection error:', error);
-      if (error.code === -32002) {
-        showStatus('⏳ Connection already pending. Check your wallet popup!', 'warning');
-      } else if (error.code === 4001) {
+      if (error.message?.includes('No Ethereum wallet detected')) {
+        showStatus('Please install MetaMask or Phantom wallet.', 'error');
+        const confirmInstall = confirm('No wallet detected. Install MetaMask?');
+        if (confirmInstall) {
+          window.open('https://metamask.io/download/', '_blank');
+        }
+      } else if (error.message?.includes('cancelled')) {
         showStatus('❌ Connection cancelled by user', 'error');
       } else {
-        showStatus('Failed to connect wallet. Please try again.', 'error');
+        showStatus(`Failed to connect wallet: ${error.message}`, 'error');
       }
     }
   };
 
-  // Estimate gas fee using proper ethers
+  // Estimate gas fee using ethers v6
   const estimateGasFee = async () => {
     if (!walletConnected || !window.ethereum || !depositAmount || !depositConfig) return;
 
     try {
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      const gasPrice = await provider.getGasPrice();
-      const gasLimit = 65000; // Typical for ERC20 transfer
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const feeData = await provider.getFeeData();
+      const gasLimit = 65000n; // Typical for ERC20 transfer
       
-      const gasCost = gasPrice.mul(gasLimit);
-      const gasCostEth = ethers.utils.formatEther(gasCost);
+      const gasCost = (feeData.gasPrice || 0n) * gasLimit;
+      const gasCostEth = ethers.formatEther(gasCost);
       
       setGasEstimate(`~${parseFloat(gasCostEth).toFixed(6)} ETH`);
     } catch (error) {
@@ -163,9 +149,9 @@ export function Navigation() {
     }
   };
 
-  // Send payment with secure server configuration
+  // Send payment using the new Ethereum wallet provider with customerID
   const sendPayment = async () => {
-    if (!walletConnected || !window.ethereum || !user?.id || !depositAmount || !depositConfig) {
+    if (!walletConnected || !user?.id || !depositAmount || !depositConfig) {
       showStatus('❌ Please connect wallet and enter amount', 'error');
       return;
     }
@@ -176,18 +162,8 @@ export function Navigation() {
       return;
     }
 
-    // ENFORCE mainnet before transaction (critical security)
-    const chainId = await window.ethereum.request({ method: 'eth_chainId' });
-    if (chainId !== '0x1') {
-      showStatus('❌ Must use Ethereum Mainnet. Please switch networks.', 'error');
-      return;
-    }
-
     try {
       showStatus('🔄 Preparing transaction...', 'info');
-
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      const signer = provider.getSigner();
       
       // Use ONLY server-controlled configuration (NO hardcoded fallbacks)
       const recipientAddress = depositConfig.recipientAddress;
@@ -197,54 +173,51 @@ export function Navigation() {
         showStatus('❌ Invalid deposit configuration', 'error');
         return;
       }
+
+      showStatus('🔄 Sending transaction... Please confirm in your wallet', 'info');
       
-      // Use server-validated token contract and decimals
-      const amount = ethers.utils.parseUnits(depositAmount, tokenInfo.decimals);
-      const tokenContract = new ethers.Contract(tokenInfo.address, ERC20_ABI, signer);
-      
-      showStatus('🔄 Sending transaction...', 'info');
-      
-      // Send transaction to server-validated recipient only
-      const tx = await tokenContract.transfer(recipientAddress, amount);
+      // Use the new Ethereum wallet provider with automatic customerID inclusion
+      const txHash = await ethereumWalletProvider.sendPayment({
+        token: selectedToken,
+        amount: depositAmount,
+        recipientAddress: recipientAddress,
+        customerID: user.id // Automatically included, user cannot modify
+      });
 
       showStatus('⏳ Transaction submitted. Waiting for confirmation...', 'warning');
       
       // Store pending deposit with minimal client data (server validates everything)
       await apiRequest('POST', '/api/deposits/pending', {
-        transactionHash: tx.hash,
+        transactionHash: txHash,
         tokenType: selectedToken,
         amount: depositAmount,
         chainId: depositConfig.chainId
       });
 
-      // Wait for transaction confirmation
-      const receipt = await tx.wait();
+      showStatus('✅ Transaction confirmed! Funds will be credited shortly.', 'success');
+      toast({
+        title: "Deposit Submitted",
+        description: `${depositAmount} ${selectedToken} deposit submitted with transaction hash: ${txHash.substring(0, 10)}...`,
+      });
       
-      if (receipt.status === 1) {
-        showStatus('✅ Transaction confirmed! Funds will be credited shortly.', 'success');
-        toast({
-          title: "Deposit Submitted",
-          description: `${depositAmount} ${selectedToken} deposit submitted. Funds will be credited after blockchain confirmation.`,
-        });
-        
-        // Reset form
-        setDepositAmount('100');
-        setIsAddFundsOpen(false);
-        
-        // Refresh balance (will update when background service processes the deposit)
-        queryClient.invalidateQueries({ queryKey: ['/api/users', user?.id, 'balance'] });
-      } else {
-        showStatus('❌ Transaction failed', 'error');
-      }
+      // Show Etherscan link
+      console.log(`View transaction: https://etherscan.io/tx/${txHash}`);
+      
+      // Reset form
+      setDepositAmount('100');
+      setIsAddFundsOpen(false);
+      
+      // Refresh balance (will update when background service processes the deposit)
+      queryClient.invalidateQueries({ queryKey: ['/api/users', user?.id, 'balance'] });
 
     } catch (error: any) {
       console.error('Payment error:', error);
-      if (error.code === 4001) {
+      if (error.message?.includes('cancelled')) {
         showStatus('❌ Transaction cancelled by user', 'error');
       } else if (error.message?.includes('insufficient funds')) {
-        showStatus('❌ Insufficient funds for gas fee', 'error');
+        showStatus('❌ Insufficient funds for transaction or gas fee', 'error');
       } else {
-        showStatus('❌ Transaction failed. Please try again.', 'error');
+        showStatus(`❌ Transaction failed: ${error.message}`, 'error');
       }
     }
   };
@@ -373,7 +346,7 @@ export function Navigation() {
                           data-testid="connect-wallet-btn"
                         >
                           <Wallet className="w-4 h-4 mr-2" />
-                          Connect MetaMask
+                          Connect Wallet
                         </Button>
                       </div>
                     ) : (
