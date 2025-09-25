@@ -917,6 +917,100 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // API key management endpoints for users
+  app.get("/api/users/:userId/api-keys", requireAuth, async (req, res) => {
+    try {
+      const userId = req.params.userId;
+      
+      // Users can only access their own API keys (or admin can access any)
+      if (req.session.userId !== userId && req.session.role !== 'admin') {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const apiKeys = await storage.getUserApiKeys(userId);
+      res.json(apiKeys);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch API keys" });
+    }
+  });
+
+  app.post("/api/users/:userId/api-keys", requireAuth, async (req, res) => {
+    try {
+      const userId = req.params.userId;
+      
+      // Users can only create API keys for themselves (or admin can create for any)
+      if (req.session.userId !== userId && req.session.role !== 'admin') {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const { label, scopes } = req.body;
+      
+      if (!label || !scopes || !Array.isArray(scopes)) {
+        return res.status(400).json({ error: "Label and scopes are required" });
+      }
+
+      // Validate scopes
+      const validScopes = ['read', 'trade', 'admin'];
+      const invalidScopes = scopes.filter(scope => !validScopes.includes(scope));
+      if (invalidScopes.length > 0) {
+        return res.status(400).json({ error: `Invalid scopes: ${invalidScopes.join(', ')}` });
+      }
+
+      // Generate secure signing secret using the cryptographically secure function
+      const { generateApiKey } = await import('./publicApiMiddleware.js');
+      const signingSecret = generateApiKey();
+      
+      const apiKey = await storage.createApiKey({
+        userId,
+        label,
+        scopes,
+        signingSecret,
+        status: 'active',
+        rateLimitTier: 1,
+      });
+
+      res.status(201).json({
+        id: apiKey.id,
+        label: apiKey.label,
+        scopes: apiKey.scopes,
+        status: apiKey.status,
+        rateLimitTier: apiKey.rateLimitTier,
+        createdAt: apiKey.createdAt,
+        message: `API key created successfully. Your key ID is: ${apiKey.id}`
+      });
+    } catch (error) {
+      console.error('API key creation error:', error);
+      res.status(500).json({ error: "Failed to create API key" });
+    }
+  });
+
+  app.delete("/api/users/:userId/api-keys/:keyId", requireAuth, async (req, res) => {
+    try {
+      const { userId, keyId } = req.params;
+      
+      // Users can only delete their own API keys (or admin can delete any)
+      if (req.session.userId !== userId && req.session.role !== 'admin') {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // Verify the API key belongs to the user
+      const apiKey = await storage.getApiKey(keyId);
+      if (!apiKey) {
+        return res.status(404).json({ error: "API key not found" });
+      }
+      
+      if (apiKey.userId !== userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      await storage.deleteApiKey(keyId);
+      res.json({ message: "API key deleted successfully" });
+    } catch (error) {
+      console.error('API key deletion error:', error);
+      res.status(500).json({ error: "Failed to delete API key" });
+    }
+  });
+
   // Admin endpoint to view total collected fees
   app.get("/api/admin/fees", async (req, res) => {
     try {

@@ -4,15 +4,19 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { PositionData, TradeData, OrderData } from "@/types/market";
 import { useCurrentUserId } from "@/contexts/UserContext";
 
 export default function Portfolio() {
-  const [activeTab, setActiveTab] = useState<'positions' | 'history' | 'orders' | 'withdraw'>('positions');
+  const [activeTab, setActiveTab] = useState<'positions' | 'history' | 'orders' | 'withdraw' | 'api-keys'>('positions');
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [galachainAddress, setGalachainAddress] = useState('');
+  const [newApiKeyLabel, setNewApiKeyLabel] = useState('');
+  const [newApiKeyScopes, setNewApiKeyScopes] = useState<string[]>(['read']);
   const currentUserId = useCurrentUserId();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -29,8 +33,13 @@ export default function Portfolio() {
     queryKey: ['/api/users', currentUserId, 'orders'],
   });
 
-  const { data: balance } = useQuery({
+  const { data: balance } = useQuery<{ balance: string }>({
     queryKey: ['/api/users', currentUserId, 'balance'],
+  });
+
+  const { data: apiKeys = [] } = useQuery<any[]>({
+    queryKey: ['/api/users', currentUserId, 'api-keys'],
+    enabled: !!currentUserId,
   });
 
 
@@ -80,11 +89,58 @@ export default function Portfolio() {
     },
   });
 
+  const createApiKeyMutation = useMutation({
+    mutationFn: async (data: { label: string; scopes: string[] }) => {
+      if (!currentUserId) throw new Error('User not authenticated');
+      const response = await apiRequest('POST', `/api/users/${currentUserId}/api-keys`, data);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "API Key Created",
+        description: `Successfully created API key: ${data.label}`,
+      });
+      setNewApiKeyLabel('');
+      setNewApiKeyScopes(['read']);
+      queryClient.invalidateQueries({ queryKey: ['/api/users', currentUserId, 'api-keys'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Creation Failed",
+        description: error.message || "Failed to create API key. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteApiKeyMutation = useMutation({
+    mutationFn: async (keyId: string) => {
+      if (!currentUserId) throw new Error('User not authenticated');
+      const response = await apiRequest('DELETE', `/api/users/${currentUserId}/api-keys/${keyId}`, {});
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "API Key Deleted",
+        description: "API key has been successfully deleted",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/users', currentUserId, 'api-keys'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Deletion Failed",
+        description: error.message || "Failed to delete API key. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const tabs = [
     { id: 'positions', label: 'Positions' },
     { id: 'history', label: 'History' },
     { id: 'orders', label: 'Orders' },
-    { id: 'withdraw', label: 'Withdraw' }
+    { id: 'withdraw', label: 'Withdraw' },
+    { id: 'api-keys', label: 'API Keys' }
   ] as const;
 
   const calculatePortfolioValue = () => {
@@ -419,6 +475,157 @@ export default function Portfolio() {
                       {withdrawMutation.isPending ? 'Processing...' : `Withdraw $${withdrawAmount || '0'} USDC`}
                     </Button>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* API Keys Tab */}
+          {activeTab === 'api-keys' && (
+            <div className="p-6">
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-xl font-semibold text-foreground mb-2">API Keys</h3>
+                  <p className="text-muted-foreground mb-4">
+                    Create API keys to access the Gala 8Ball prediction market API programmatically. 
+                    <Link href="/docs/api" className="text-primary hover:underline ml-1">
+                      View API documentation
+                    </Link>
+                  </p>
+                </div>
+
+                {/* Create New API Key */}
+                <div className="bg-muted/50 border rounded-lg p-4">
+                  <h4 className="font-medium text-foreground mb-3">Create New API Key</h4>
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="api-key-label">Label *</Label>
+                      <Input
+                        id="api-key-label"
+                        type="text"
+                        placeholder="e.g., Trading Bot, Data Collection"
+                        value={newApiKeyLabel}
+                        onChange={(e) => setNewApiKeyLabel(e.target.value)}
+                        data-testid="api-key-label-input"
+                        className="mt-1"
+                      />
+                      <div className="text-xs text-muted-foreground mt-1">
+                        A descriptive name to identify this API key
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <Label>Permissions *</Label>
+                      <div className="space-y-2 mt-2">
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            id="scope-read"
+                            checked={newApiKeyScopes.includes('read')}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setNewApiKeyScopes(prev => [...prev, 'read']);
+                              } else {
+                                setNewApiKeyScopes(prev => prev.filter(s => s !== 'read'));
+                              }
+                            }}
+                            data-testid="scope-read-checkbox"
+                          />
+                          <Label htmlFor="scope-read" className="text-sm">
+                            <strong>Read</strong> - Access market data, prices, and statistics
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            id="scope-trade"
+                            checked={newApiKeyScopes.includes('trade')}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setNewApiKeyScopes(prev => [...prev, 'trade']);
+                              } else {
+                                setNewApiKeyScopes(prev => prev.filter(s => s !== 'trade'));
+                              }
+                            }}
+                            data-testid="scope-trade-checkbox"
+                          />
+                          <Label htmlFor="scope-trade" className="text-sm">
+                            <strong>Trade</strong> - Create and cancel orders, manage positions
+                          </Label>
+                        </div>
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Select the permissions your API key needs. You can always delete and recreate keys with different permissions.
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <Button
+                        onClick={() => createApiKeyMutation.mutate({ 
+                          label: newApiKeyLabel, 
+                          scopes: newApiKeyScopes 
+                        })}
+                        disabled={!newApiKeyLabel || newApiKeyScopes.length === 0 || createApiKeyMutation.isPending}
+                        data-testid="create-api-key-btn"
+                      >
+                        {createApiKeyMutation.isPending ? 'Creating...' : 'Create API Key'}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Existing API Keys */}
+                <div>
+                  <h4 className="font-medium text-foreground mb-3">Your API Keys</h4>
+                  {apiKeys.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground bg-muted/30 border rounded-lg">
+                      No API keys yet. Create your first API key above to get started.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {apiKeys.map((key: any) => (
+                        <div key={key.id} className="bg-card border rounded-lg p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-2">
+                                <h5 className="font-medium text-foreground">{key.label}</h5>
+                                <div className="flex gap-1">
+                                  {key.scopes.map((scope: string) => (
+                                    <span
+                                      key={scope}
+                                      className={`px-2 py-1 rounded-md text-xs font-medium ${
+                                        scope === 'read' 
+                                          ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+                                          : scope === 'trade'
+                                          ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                                          : 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200'
+                                      }`}
+                                    >
+                                      {scope}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                <div>Key ID: <code className="bg-muted px-1 rounded">{key.id}</code></div>
+                                <div>Created: {new Date(key.createdAt).toLocaleDateString()}</div>
+                                {key.lastUsedAt && (
+                                  <div>Last used: {new Date(key.lastUsedAt).toLocaleDateString()}</div>
+                                )}
+                              </div>
+                            </div>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => deleteApiKeyMutation.mutate(key.id)}
+                              disabled={deleteApiKeyMutation.isPending}
+                              data-testid={`delete-api-key-${key.id}`}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
