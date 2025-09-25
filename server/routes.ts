@@ -139,7 +139,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { username } = req.body;
       
-      // Create or get guest user
+      // Create guest user with minimal balance for testing
       const userData = {
         username: username || `Guest${Date.now()}`,
         walletAddress: `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -147,10 +147,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const user = await storage.createUser(userData);
       
+      // Initialize with small test balance (100 USDC instead of 1000)
+      await storage.updateUserBalance(user.id, '100');
+      
       // Set session
       req.session.userId = user.id;
       
-      res.json({ user, message: "Guest session created" });
+      res.json({ user, message: "Guest session created with test balance" });
     } catch (error) {
       res.status(500).json({ error: "Failed to create guest session" });
     }
@@ -159,22 +162,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/auth/me", async (req, res) => {
     try {
       if (!req.session.userId) {
-        // Auto-create guest user if no session
-        const userData = {
-          username: `Guest${Date.now()}`,
-          walletAddress: `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        };
-        
-        const user = await storage.createUser(userData);
-        req.session.userId = user.id;
-        
-        // Ensure balance is initialized (createUser should do this, but double-check)
-        const balance = await storage.getUserBalance(user.id);
-        if (!balance) {
-          await storage.updateUserBalance(user.id, '1000');
-        }
-        
-        return res.json({ user });
+        return res.status(401).json({ error: "Not authenticated" });
       }
       
       const user = await storage.getUser(req.session.userId);
@@ -288,7 +276,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Test USDC Faucet endpoints
+  // Secure /api/me/faucet route
+  app.post("/api/me/faucet", requireAuth, async (req, res) => {
+    try {
+      const validatedData = faucetSchema.parse(req.body);
+      const userId = req.session.userId!; // Safe after requireAuth
+      
+      // Get current balance
+      const currentBalance = await storage.getUserBalance(userId);
+      if (!currentBalance) {
+        return res.status(404).json({ error: "User balance not found" });
+      }
+      
+      const current = parseFloat(currentBalance.balance);
+      const newBalance = current + validatedData.amount;
+      
+      // Set max balance (10000 USDC)
+      if (newBalance > 10000) {
+        return res.status(400).json({ error: "Maximum balance of 10,000 USDC reached. Reset your balance to continue testing." });
+      }
+      
+      const updatedBalance = await storage.updateUserBalance(userId, newBalance.toString());
+      res.json({ 
+        balance: updatedBalance,
+        message: `Added ${validatedData.amount} test USDC to your balance`
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to add test USDC" });
+    }
+  });
+
+  // Test USDC Faucet endpoints (backward compatibility)
   app.post("/api/users/:id/faucet", requireAuth, requireOwnership, async (req, res) => {
     try {
       const validatedData = faucetSchema.parse(req.body);
@@ -321,6 +342,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Secure /api/me/withdraw route
+  app.post("/api/me/withdraw", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!; // Safe after requireAuth
+      const withdrawData = z.object({
+        amount: z.string().refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) > 0, {
+          message: "Amount must be a positive number"
+        }),
+        address: z.string().min(10, "GalaChain address must be at least 10 characters")
+      }).strict().parse(req.body);
+
+      const amount = parseFloat(withdrawData.amount);
+      
+      // Get current balance
+      const currentBalance = await storage.getUserBalance(userId);
+      if (!currentBalance) {
+        return res.status(400).json({ error: "User balance not found" });
+      }
+      
+      const currentAmount = parseFloat(currentBalance.balance);
+      
+      if (amount > currentAmount) {
+        return res.status(400).json({ error: "Insufficient balance" });
+      }
+      
+      if (amount < 1) {
+        return res.status(400).json({ error: "Minimum withdrawal amount is $1 USDC" });
+      }
+
+      // Update balance (demo implementation - just reduces balance)
+      const newBalance = currentAmount - amount;
+      await storage.updateUserBalance(userId, newBalance.toString());
+      
+      res.json({ 
+        message: `Successfully withdrew $${amount.toFixed(2)} USDC to ${withdrawData.address.slice(0, 10)}...`,
+        balance: newBalance.toString(),
+        transactionId: `demo-tx-${Date.now()}` // Demo transaction ID
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid withdrawal data", details: error.errors });
+      }
+      res.status(500).json({ error: "Failed to process withdrawal" });
+    }
+  });
+
+  // Withdraw (backward compatibility)
   app.post("/api/users/:id/withdraw", requireAuth, requireOwnership, async (req, res) => {
     try {
       const userId = req.params.id;
@@ -366,6 +434,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Secure /api/me/reset-balance route
+  app.post("/api/me/reset-balance", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!; // Safe after requireAuth
+      const updatedBalance = await storage.updateUserBalance(userId, '1000');
+      
+      res.json({ 
+        balance: updatedBalance,
+        message: "Balance reset to 1000 test USDC" 
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to reset balance" });
+    }
+  });
+
+  // Reset balance (backward compatibility)
   app.post("/api/users/:id/reset-balance", requireAuth, requireOwnership, async (req, res) => {
     try {
       const userId = req.params.id;
@@ -399,6 +483,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Secure /api/me/balance route
+  app.get("/api/me/balance", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!; // Safe after requireAuth
+      const balance = await storage.getUserBalance(userId);
+      if (!balance) {
+        return res.status(404).json({ error: "User balance not found" });
+      }
+      res.json(balance);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch user balance" });
+    }
+  });
+
+  // Keep original for backward compatibility
   app.get("/api/users/:id/balance", requireAuth, requireOwnership, async (req, res) => {
     try {
       const balance = await storage.getUserBalance(req.params.id);
@@ -416,7 +515,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //   return res.status(410).json({ error: "Direct balance modification disabled. Use /faucet or /reset-balance endpoints." });
   // });
 
-  // User positions
+  // Secure /api/me/positions route  
+  app.get("/api/me/positions", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!; // Safe after requireAuth
+      const positions = await storage.getUserPositions(userId);
+      res.json(positions || []);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch user positions" });
+    }
+  });
+
+  // User positions (backward compatibility)
   app.get("/api/users/:id/positions", requireAuth, requireOwnership, async (req, res) => {
     try {
       const positions = await storage.getUserPositions(req.params.id);
@@ -426,7 +536,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // User orders
+  // Secure /api/me/orders route
+  app.get("/api/me/orders", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!; // Safe after requireAuth
+      const orders = await storage.getUserOrders(userId);
+      res.json(orders || []);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch user orders" });
+    }
+  });
+
+  // User orders (backward compatibility)
   app.get("/api/users/:id/orders", requireAuth, requireOwnership, async (req, res) => {
     try {
       const orders = await storage.getUserOrders(req.params.id);
@@ -436,7 +557,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // User trades
+  // Secure /api/me/trades route
+  app.get("/api/me/trades", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!; // Safe after requireAuth
+      const trades = await storage.getUserTrades(userId);
+      res.json(trades || []);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch user trades" });
+    }
+  });
+
+  // User trades (backward compatibility)
   app.get("/api/users/:id/trades", requireAuth, requireOwnership, async (req, res) => {
     try {
       const trades = await storage.getUserTrades(req.params.id);
