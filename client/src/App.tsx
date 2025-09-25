@@ -13,6 +13,8 @@ import MarketDetail from "@/pages/market-detail";
 import Portfolio from "@/pages/portfolio";
 import Admin from "@/pages/admin";
 import ApiDocs from "@/pages/api-docs";
+import Terms from "@/pages/terms";
+import Privacy from "@/pages/privacy";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 import { initGA } from "../lib/analytics";
@@ -29,6 +31,8 @@ function Router() {
       <Route path="/portfolio" component={Portfolio} />
       <Route path="/admin" component={Admin} />
       <Route path="/docs/api" component={ApiDocs} />
+      <Route path="/terms" component={Terms} />
+      <Route path="/privacy" component={Privacy} />
       <Route component={NotFound} />
     </Switch>
   );
