@@ -367,18 +367,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userAgent: req.get('User-Agent'),
       });
       
-      // Send verification email
-      await sendVerificationEmail(user.email, verificationToken);
-      
-      res.status(201).json({ 
-        message: "Registration successful. Please check your email to verify your account.",
-        user: {
-          id: user.id,
-          email: user.email,
-          username: user.username,
-          emailVerified: user.emailVerified,
+      // Send verification email (don't fail registration if email fails)
+      try {
+        await sendVerificationEmail(user.email, verificationToken);
+        res.status(201).json({ 
+          message: "Registration successful. Please check your email to verify your account.",
+          user: {
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            emailVerified: user.emailVerified,
+          }
+        });
+      } catch (emailError) {
+        console.error('Email delivery failed, but user was created:', emailError);
+        // In development, log the verification token so user can verify manually
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`DEVELOPMENT: Email verification token for ${user.email}: ${verificationToken}`);
+          console.log(`DEVELOPMENT: Verify at: http://localhost:5000/verify-email?token=${verificationToken}`);
         }
-      });
+        
+        res.status(201).json({ 
+          message: "Registration successful. Email verification is temporarily unavailable - your account is ready to use.",
+          user: {
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            emailVerified: user.emailVerified,
+          }
+        });
+      }
     } catch (error: any) {
       if (error.name === 'ZodError') {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
