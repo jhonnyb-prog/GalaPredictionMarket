@@ -13,6 +13,8 @@ export const outcomeEnum = pgEnum('outcome', ['yes', 'no']);
 export const feeWithdrawalStatusEnum = pgEnum('fee_withdrawal_status', ['pending', 'completed', 'failed', 'cancelled']);
 export const apiKeyStatusEnum = pgEnum('api_key_status', ['active', 'suspended', 'revoked']);
 export const apiKeyScopeEnum = pgEnum('api_key_scope', ['read', 'trade', 'admin']);
+export const depositStatusEnum = pgEnum('deposit_status', ['pending', 'confirmed', 'failed']);
+export const tokenTypeEnum = pgEnum('token_type', ['USDC', 'USDT']);
 
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -144,12 +146,38 @@ export const apiKeyNonces = pgTable("api_key_nonces", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Table for tracking cryptocurrency deposits from on-ramp wallet
+export const deposits = pgTable("deposits", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  transactionHash: text("transaction_hash").unique().notNull(), // Ethereum transaction hash
+  walletAddress: text("wallet_address").notNull(), // Recipient wallet (ONRAMP_WALLET_ETH)
+  tokenContract: text("token_contract").notNull(), // ERC-20 token contract address
+  fromAddress: text("from_address").notNull(), // Sender wallet address
+  tokenType: tokenTypeEnum("token_type").notNull(), // USDC or USDT
+  amount: decimal("amount", { precision: 20, scale: 8 }).notNull(), // Amount deposited
+  status: depositStatusEnum("status").default('pending'),
+  userMessage: text("user_message"), // Encoded userID from transaction data
+  chainId: integer("chain_id").default(1).notNull(), // Ethereum mainnet = 1
+  blockNumber: integer("block_number"), // Ethereum block number for confirmation tracking
+  confirmations: integer("confirmations").default(0).notNull(), // Number of block confirmations
+  failureReason: text("failure_reason"), // Reason if deposit failed
+  createdAt: timestamp("created_at").defaultNow(),
+  confirmedAt: timestamp("confirmed_at"), // When blockchain confirmed the transaction
+  creditedAt: timestamp("credited_at"), // When funds were credited to user balance (idempotency)
+}, (table) => ({
+  userIdIndex: sql`CREATE INDEX IF NOT EXISTS deposits_user_id_idx ON ${table} (${table.userId})`,
+  statusIndex: sql`CREATE INDEX IF NOT EXISTS deposits_status_idx ON ${table} (${table.status})`,
+  tokenWalletIndex: sql`CREATE INDEX IF NOT EXISTS deposits_token_wallet_idx ON ${table} (${table.tokenContract}, ${table.walletAddress})`,
+}));
+
 // Relations
 export const usersRelations = relations(users, ({ many, one }) => ({
   positions: many(positions),
   orders: many(orders),
   trades: many(trades),
   balance: one(userBalances),
+  deposits: many(deposits),
 }));
 
 export const marketsRelations = relations(markets, ({ many }) => ({
@@ -196,6 +224,10 @@ export const apiKeysRelations = relations(apiKeys, ({ one, many }) => ({
 
 export const apiKeyNoncesRelations = relations(apiKeyNonces, ({ one }) => ({
   apiKey: one(apiKeys, { fields: [apiKeyNonces.keyId], references: [apiKeys.id] }),
+}));
+
+export const depositsRelations = relations(deposits, ({ one }) => ({
+  user: one(users, { fields: [deposits.userId], references: [users.id] }),
 }));
 
 // Schemas
@@ -295,3 +327,21 @@ export type InsertFeeWithdrawal = z.infer<typeof insertFeeWithdrawalSchema>;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type InsertApiKey = z.infer<typeof insertApiKeySchema>;
 export type ApiKeyNonce = typeof apiKeyNonces.$inferSelect;
+
+export type Deposit = typeof deposits.$inferSelect;
+
+export const insertDepositSchema = createInsertSchema(deposits).omit({
+  id: true,
+  status: true,
+  confirmations: true,
+  confirmedAt: true,
+  creditedAt: true,
+  createdAt: true,
+}).extend({
+  amount: z.string().regex(/^\d+(\.\d{1,8})?$/, "Invalid amount format").refine(val => {
+    const num = parseFloat(val);
+    return num >= 1; // Minimum 1 USDC/USDT as requested
+  }, "Amount must be at least 1 USDC or 1 USDT"),
+});
+
+export type InsertDeposit = z.infer<typeof insertDepositSchema>;
