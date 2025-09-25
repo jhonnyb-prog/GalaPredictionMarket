@@ -47,10 +47,11 @@ A vibrant, gaming-themed binary prediction market platform built on modern web t
 
 ### Backend
 - **Express.js** with TypeScript
-- **PostgreSQL** with Drizzle ORM
+- **PostgreSQL** with Drizzle ORM (local or cloud)
 - **Type-safe** API with Zod validation
 - **Session management** with PostgreSQL storage
 - **RESTful API** design
+- **dotenv** for environment variable management
 
 ### Blockchain Integration
 - **GalaChain SDK** for blockchain connectivity
@@ -78,32 +79,47 @@ A vibrant, gaming-themed binary prediction market platform built on modern web t
    npm install
    ```
 
-3. **Set up environment variables**
+3. **Install additional required packages**
+   
+   The application needs additional packages for local PostgreSQL support:
+   ```bash
+   npm install dotenv pg @types/pg drizzle-orm
+   ```
+
+4. **Set up environment variables**
    
    Create a `.env` file in the root directory:
    ```env
-   # Database Configuration
-   DATABASE_URL="postgresql://username:password@localhost:5432/gala8ball"
-   PGHOST=localhost
-   PGPORT=5432
-   PGDATABASE=gala8ball
-   PGUSER=your_username
-   PGPASSWORD=your_password
+   # Database Configuration (replace 'your_username' with your actual PostgreSQL username)
+   DATABASE_URL="postgresql://your_username@localhost:5432/gala8ball"
    
    # Session Security
-   SESSION_SECRET="your-super-secret-session-key-minimum-32-chars"
-   
-   # Oracle API Keys (Optional - for production)
-   COINGECKO_API_KEY="your-coingecko-api-key"
-   SPORTRADAR_API_KEY="your-sportradar-api-key"
-   AP_ELECTIONS_API_KEY="your-ap-elections-api-key"
+   SESSION_SECRET="gala-prediction-market-dev-secret-change-in-production"
    
    # Development Settings
    NODE_ENV=development
    PORT=5000
+   
+   # Oracle API Keys (Optional - for production features)
+   # COINGECKO_API_KEY="your-coingecko-api-key"
+   # SPORTRADAR_API_KEY="your-sportradar-api-key"
+   # AP_ELECTIONS_API_KEY="your-ap-elections-api-key"
+   
+   # Email Configuration (Optional - for email verification)
+   # EMAIL_USER="your-email@gmail.com"
+   # EMAIL_PASS="your-app-password"
+   # EMAIL_FROM="noreply@gala8ball.com"
+   # CLIENT_URL="http://localhost:5000"
+   
+   # Blockchain Configuration (Optional - for deposit verification)
+   # ETHEREUM_RPC_URL="https://cloudflare-eth.com"
+   # ONRAMP_WALLET_ETH="your-ethereum-wallet-address"
+   
+   # Google Analytics (Optional)
+   # VITE_GA_MEASUREMENT_ID="your-ga-measurement-id"
    ```
 
-4. **Set up the database**
+5. **Set up the database**
    
    Create a PostgreSQL database:
    ```bash
@@ -115,14 +131,30 @@ A vibrant, gaming-themed binary prediction market platform built on modern web t
    npm run db:push
    ```
 
-5. **Start the development server**
+6. **Start the development server**
    ```bash
    npm run dev
    ```
 
-6. **Open your browser**
+7. **Open your browser**
    
    Navigate to `http://localhost:5000` to see the application.
+
+### 🔧 **Important Configuration Notes**
+
+- **Database Driver**: The application has been configured to use local PostgreSQL instead of Neon (serverless)
+- **Environment Loading**: Added `dotenv` configuration to properly load environment variables
+- **Server Binding**: Modified to use `localhost` instead of `0.0.0.0` for local development
+- **Port**: Application runs on port 5000 (not 3000) to avoid conflicts
+
+### 🚨 **Troubleshooting**
+
+If you encounter issues:
+
+1. **Database Connection Error**: Ensure PostgreSQL is running and the username in `DATABASE_URL` matches your system username
+2. **Port Already in Use**: The application uses port 5000 by default. Change the `PORT` in `.env` if needed
+3. **Environment Variables Not Loading**: Make sure the `.env` file is in the root directory and contains the correct `DATABASE_URL`
+4. **Schema Push Fails**: Verify your PostgreSQL user has permission to create tables in the `gala8ball` database
 
 ## 📁 Project Structure
 
