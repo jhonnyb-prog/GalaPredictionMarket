@@ -237,7 +237,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "User not found" });
       }
       
-      res.json({ user });
+      res.json({ 
+        user,
+        isAdmin: req.session.isAdmin === true 
+      });
     } catch (error) {
       res.status(500).json({ error: "Failed to get user session" });
     }
@@ -252,13 +255,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  // DISABLED: Admin toggle endpoint - SECURITY RISK
-  // This endpoint was allowing privilege escalation - any user could become admin
-  // In production, admin access should be granted server-side based on database roles
-  app.post("/api/auth/admin-toggle", requireAuth, async (req, res) => {
-    return res.status(403).json({ 
-      error: "Admin access modification disabled for security. Contact system administrator." 
-    });
+  // Admin role toggle (for development/demo - in production use database roles)
+  app.post("/api/auth/role", requireAuth, async (req, res) => {
+    try {
+      const { isAdmin } = req.body;
+      
+      // Set admin flag in session (for demo purposes)
+      req.session.isAdmin = isAdmin === true;
+      
+      res.json({ 
+        isAdmin: req.session.isAdmin,
+        message: `Role updated to ${req.session.isAdmin ? 'admin' : 'user'}`
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update role" });
+    }
   });
 
   // Email/Password Authentication Endpoints

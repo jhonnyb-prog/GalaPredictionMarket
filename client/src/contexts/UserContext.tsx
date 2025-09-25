@@ -6,21 +6,23 @@ interface UserContextType {
   user: User | null;
   isLoading: boolean;
   error: Error | null;
+  isAdmin: boolean;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
-  const { data, isLoading, error } = useQuery<{ user: User }>({
+  const { data, isLoading, error } = useQuery<{ user: User; isAdmin: boolean }>({
     queryKey: ['/api/auth/me'],
     staleTime: 5 * 60 * 1000, // 5 minutes
     retry: 1,
   });
 
   const user = data?.user || null;
+  const isAdmin = data?.isAdmin || false;
 
   return (
-    <UserContext.Provider value={{ user, isLoading, error }}>
+    <UserContext.Provider value={{ user, isLoading, error, isAdmin }}>
       {children}
     </UserContext.Provider>
   );

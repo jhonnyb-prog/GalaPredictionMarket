@@ -1,4 +1,7 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useState } from "react";
+import { useUser } from "./UserContext";
+import { apiRequest } from "@/lib/queryClient";
+import { useQueryClient } from "@tanstack/react-query";
 
 type UserRole = 'user' | 'admin';
 
@@ -12,22 +15,36 @@ interface RoleContextType {
 const RoleContext = createContext<RoleContextType | undefined>(undefined);
 
 export function RoleProvider({ children }: { children: React.ReactNode }) {
-  const [role, setRole] = useState<UserRole>(() => {
-    // Get role from localStorage or default to 'user'
-    const savedRole = localStorage.getItem('gala8ball_user_role');
-    return (savedRole === 'admin' || savedRole === 'user') ? savedRole : 'user';
-  });
+  const { isAdmin: serverIsAdmin, user } = useUser();
+  const queryClient = useQueryClient();
+  
+  // Use server admin status as source of truth
+  const isAdmin = serverIsAdmin && !!user; // Only show admin if authenticated
+  const role: UserRole = isAdmin ? 'admin' : 'user';
 
-  // Save role to localStorage whenever it changes
-  useEffect(() => {
-    localStorage.setItem('gala8ball_user_role', role);
-  }, [role]);
+  const setRole = async (newRole: UserRole) => {
+    if (!user) return; // Can't change role if not logged in
+    
+    try {
+      const isAdminRole = newRole === 'admin';
+      
+      // Update role on server
+      await apiRequest('POST', '/api/auth/role', {
+        isAdmin: isAdminRole
+      });
+      
+      // Refetch user data to update admin status
+      await queryClient.invalidateQueries({ queryKey: ['/api/auth/me'] });
+    } catch (error) {
+      console.error('Failed to update role:', error);
+    }
+  };
 
   const value = {
     role,
     setRole,
-    isAdmin: role === 'admin',
-    isUser: role === 'user'
+    isAdmin,
+    isUser: !isAdmin
   };
 
   return (
