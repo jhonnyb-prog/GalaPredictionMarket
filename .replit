@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "web"]
+modules = ["nodejs-20", "web", "postgresql-16"]
 run = "npm run dev"
 hidden = [".config", ".git", "generated-icon.png", "node_modules", "dist"]
 
@@ -16,15 +16,11 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
-<<<<<<< HEAD
-localPort = 38481
-=======
-localPort = 33633
+localPort = 38907
 externalPort = 3002
 
 [[ports]]
 localPort = 39789
->>>>>>> f466f1c (Update Ethereum library import method)
 externalPort = 3000
 
 [[ports]]
@@ -58,6 +54,3 @@ author = "agent"
 task = "shell.exec"
 args = "npm run dev"
 waitForPort = 5000
-
-[workflows.workflow.metadata]
-outputType = "webview"
