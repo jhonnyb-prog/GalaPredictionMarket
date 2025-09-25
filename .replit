@@ -20,10 +20,6 @@ localPort = 38907
 externalPort = 3002
 
 [[ports]]
-localPort = 39789
-externalPort = 3000
-
-[[ports]]
 localPort = 45091
 externalPort = 3001
 
@@ -31,7 +27,11 @@ externalPort = 3001
 PORT = "5000"
 
 [agent]
-integrations = ["javascript_websocket:1.0.0", "javascript_database:1.0.0", "javascript_google_analytics:1.0.0"]
+integrations = [
+  "javascript_websocket:1.0.0",
+  "javascript_database:1.0.0",
+  "javascript_google_analytics:1.0.0",
+]
 expertMode = true
 
 [workflows]

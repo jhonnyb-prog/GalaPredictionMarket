@@ -97,7 +97,7 @@ app.use((req, res, next) => {
     const depositProcessor = createDepositProcessor();
     if (depositProcessor) {
       log('🏦 Starting deposit processor...');
-      depositProcessor.start(2); // Check every 2 minutes
+      depositProcessor.start(0.5); // Check every 30 seconds
     }
   });
 })();
