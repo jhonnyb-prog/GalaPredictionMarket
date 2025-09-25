@@ -21,6 +21,7 @@ import { auth, requiresAuth } from 'express-openid-connect';
 import publicApiRouter from "./publicApi";
 import { ethers } from "ethers";
 import cors from "cors";
+import { notificationService } from "./notifications";
 
 // Extend session interface to include userId and admin flag
 declare module 'express-session' {
@@ -156,11 +157,11 @@ function csrfProtection(req: any, res: any, next: any) {
   next();
 }
 
-// Initialize blockchain provider for transaction verification
+// Initialize blockchain provider for transaction verification (ethers v6)
 const getEthereumProvider = () => {
   // Use Infura, Alchemy, or other RPC provider for mainnet verification
   const rpcUrl = process.env.ETHEREUM_RPC_URL || 'https://cloudflare-eth.com'; // Free Cloudflare Ethereum RPC
-  return new ethers.providers.JsonRpcProvider(rpcUrl);
+  return new ethers.JsonRpcProvider(rpcUrl);
 };
 
 // Validation schemas
@@ -1628,6 +1629,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Notification endpoints
+  app.get("/api/notifications", requireAuth, async (req, res) => {
+    try {
+      const notifications = notificationService.getNotifications(req.session.userId!);
+      res.json(notifications);
+    } catch (error) {
+      console.error('Get notifications error:', error);
+      res.status(500).json({ error: "Failed to fetch notifications" });
+    }
+  });
+
+  app.get("/api/notifications/unread-count", requireAuth, async (req, res) => {
+    try {
+      const count = notificationService.getUnreadCount(req.session.userId!);
+      res.json({ count });
+    } catch (error) {
+      console.error('Get unread count error:', error);
+      res.status(500).json({ error: "Failed to fetch unread count" });
+    }
+  });
+
+  app.post("/api/notifications/:id/read", requireAuth, async (req, res) => {
+    try {
+      const success = notificationService.markAsRead(req.session.userId!, req.params.id);
+      if (success) {
+        res.json({ message: "Notification marked as read" });
+      } else {
+        res.status(404).json({ error: "Notification not found" });
+      }
+    } catch (error) {
+      console.error('Mark notification read error:', error);
+      res.status(500).json({ error: "Failed to mark notification as read" });
+    }
+  });
 
   const httpServer = createServer(app);
   return httpServer;

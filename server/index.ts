@@ -3,6 +3,7 @@ import session from "express-session";
 import MemoryStore from "memorystore";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { createDepositProcessor } from "./depositProcessor";
 
 const app = express();
 
@@ -91,5 +92,12 @@ app.use((req, res, next) => {
     reusePort: true,
   }, () => {
     log(`serving on port ${port}`);
+    
+    // Start deposit processing service
+    const depositProcessor = createDepositProcessor();
+    if (depositProcessor) {
+      log('🏦 Starting deposit processor...');
+      depositProcessor.start(2); // Check every 2 minutes
+    }
   });
 })();
