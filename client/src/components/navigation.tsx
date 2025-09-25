@@ -278,22 +278,21 @@ export function Navigation() {
             </Link>
             <div className="hidden md:flex items-center space-x-6 ml-8">
               {navItems.map((item) => (
-                <Link
+                <Button
                   key={item.id}
-                  href={item.path}
+                  variant="ghost"
+                  className={`text-sm font-medium transition-colors ${
+                    isActive(item.path)
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-primary"
+                  }`}
                   data-testid={`nav-${item.id}`}
+                  asChild
                 >
-                  <Button
-                    variant="ghost"
-                    className={`text-sm font-medium transition-colors ${
-                      isActive(item.path)
-                        ? "text-foreground"
-                        : "text-muted-foreground hover:text-primary"
-                    }`}
-                  >
+                  <Link href={item.path}>
                     {item.label}
-                  </Button>
-                </Link>
+                  </Link>
+                </Button>
               ))}
             </div>
           </div>
@@ -476,24 +475,26 @@ export function Navigation() {
             ) : (
               <div className="hidden sm:flex items-center space-x-2">
                 <Button 
-                  onClick={async () => {
-                    // Demo wallet connection for easy access
-                    const response = await fetch('/api/auth/wallet-connect', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify({ walletAddress: `0x${Date.now().toString(16).padStart(40, '0')}` })
-                    });
-                    if (response.ok) {
-                      queryClient.invalidateQueries({ queryKey: ['/api/auth/me'] });
-                      toast({ title: "Demo Account Created", description: "You can now access the admin panel" });
-                    }
-                  }}
                   variant="outline" 
                   size="sm"
-                  data-testid="demo-connect"
+                  data-testid="nav-login"
+                  className="text-sm font-medium"
+                  asChild
                 >
-                  Quick Demo Login
+                  <Link href="/login">
+                    Login
+                  </Link>
+                </Button>
+                <Button 
+                  variant="default" 
+                  size="sm"
+                  data-testid="nav-signup"
+                  className="text-sm font-medium bg-accent hover:bg-accent/90 text-accent-foreground"
+                  asChild
+                >
+                  <Link href="/signup">
+                    Sign Up
+                  </Link>
                 </Button>
               </div>
             )}
@@ -521,12 +522,36 @@ export function Navigation() {
               <SheetContent side="right">
                 <div className="flex flex-col space-y-6 mt-8">
                   
-                  {/* Mobile Wallet Status */}
+                  {/* Mobile Authentication */}
                   {!user ? (
                     <div className="bg-card border border-border rounded-lg p-4">
                       <div className="text-sm font-medium mb-3">Get Started</div>
-                      <div className="text-xs text-muted-foreground">
-                        Connect your wallet using the button below to start trading prediction markets
+                      <div className="text-xs text-muted-foreground mb-4">
+                        Create an account or sign in to start trading prediction markets
+                      </div>
+                      <div className="flex flex-col space-y-2">
+                        <Button 
+                          variant="outline" 
+                          className="w-full text-sm"
+                          data-testid="nav-mobile-login"
+                          onClick={() => setIsOpen(false)}
+                          asChild
+                        >
+                          <Link href="/login">
+                            Login
+                          </Link>
+                        </Button>
+                        <Button 
+                          variant="default" 
+                          className="w-full text-sm bg-accent hover:bg-accent/90 text-accent-foreground"
+                          data-testid="nav-mobile-signup"
+                          onClick={() => setIsOpen(false)}
+                          asChild
+                        >
+                          <Link href="/signup">
+                            Sign Up
+                          </Link>
+                        </Button>
                       </div>
                     </div>
                   ) : (
@@ -596,23 +621,22 @@ export function Navigation() {
                   {/* Navigation Items */}
                   <div className="flex flex-col space-y-2">
                     {navItems.map((item) => (
-                      <Link
+                      <Button
                         key={item.id}
-                        href={item.path}
+                        variant="ghost"
+                        className={`w-full justify-start ${
+                          isActive(item.path)
+                            ? "text-foreground"
+                            : "text-muted-foreground"
+                        }`}
+                        data-testid={`nav-mobile-${item.id}`}
                         onClick={() => setIsOpen(false)}
+                        asChild
                       >
-                        <Button
-                          variant="ghost"
-                          className={`w-full justify-start ${
-                            isActive(item.path)
-                              ? "text-foreground"
-                              : "text-muted-foreground"
-                          }`}
-                          data-testid={`nav-mobile-${item.id}`}
-                        >
+                        <Link href={item.path}>
                           {item.label}
-                        </Button>
-                      </Link>
+                        </Link>
+                      </Button>
                     ))}
                   </div>
                 </div>
