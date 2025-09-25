@@ -18,13 +18,56 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 
+// Types for admin data
+type StatsData = {
+  totalFees: string;
+  totalVolume: string;
+  activeMarkets: string;
+  totalUsers: string;
+  averageMarketVolume: string;
+  marketsResolvedLast24h: string;
+};
+
+type UserData = {
+  id: string;
+  username: string;
+  walletAddress?: string;
+  email?: string;
+  balance?: string;
+  createdAt: string;
+  lastLoginAt?: string;
+  stats?: {
+    totalTrades: number;
+    totalVolume: string;
+    marketsCreated: number;
+    winRate: number;
+  };
+  positions?: any[];
+};
+
+type FeeSummary = {
+  totalCollected: string;
+  available: string;
+  totalPending: string;
+  totalWithdrawn: string;
+};
+
+type FeeWithdrawal = {
+  id: string;
+  adminUserId: string;
+  toAddress: string;
+  amount: string;
+  status: 'pending' | 'completed' | 'failed';
+  createdAt: string;
+};
+
 export default function Admin() {
   const { isAdmin } = useRole();
   const [, setLocation] = useLocation();
   const [activeTab, setActiveTab] = useState<'markets' | 'users' | 'disputes' | 'analytics' | 'fees'>('markets');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [userSearchTerm, setUserSearchTerm] = useState('');
-  const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [selectedUser, setSelectedUser] = useState<UserData | null>(null);
   const [isUserDetailsOpen, setIsUserDetailsOpen] = useState(false);
   const [isEditUserOpen, setIsEditUserOpen] = useState(false);
   const [marketToResolve, setMarketToResolve] = useState<string | null>(null);
@@ -36,22 +79,22 @@ export default function Admin() {
     queryKey: ['/api/markets'],
   });
 
-  const { data: stats } = useQuery({
+  const { data: stats } = useQuery<StatsData>({
     queryKey: ['/api/stats'],
   });
 
-  const { data: users = [] } = useQuery({
+  const { data: users = [] } = useQuery<UserData[]>({
     queryKey: ['/api/admin/users'],
     enabled: activeTab === 'users',
   });
 
   // Fee withdrawal queries - fallback to stats data if admin endpoints aren't working
-  const { data: feeSummary } = useQuery({
+  const { data: feeSummary } = useQuery<FeeSummary>({
     queryKey: ['/api/admin/fees/summary'],
     enabled: activeTab === 'fees',
   });
 
-  const { data: feeWithdrawals = [] } = useQuery({
+  const { data: feeWithdrawals = [] } = useQuery<FeeWithdrawal[]>({
     queryKey: ['/api/admin/fees/withdrawals'],
     enabled: activeTab === 'fees',
   });
@@ -92,7 +135,16 @@ export default function Admin() {
     }
   });
 
-  const { data: selectedUserActivity } = useQuery({
+  const { data: selectedUserActivity } = useQuery<{
+    balance?: { balance: string };
+    stats?: { 
+      totalPositions: number; 
+      totalOrders: number; 
+      totalTrades: number; 
+      portfolioValue?: string; 
+    };
+    positions?: any[];
+  }>({
     queryKey: ['/api/admin/users', selectedUser?.id, 'activity'],
     enabled: !!selectedUser?.id,
   });
@@ -270,7 +322,7 @@ export default function Admin() {
     });
   };
 
-  const filteredUsers = users.filter((user: any) =>
+  const filteredUsers = users.filter((user: UserData) =>
     user.username?.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
     user.walletAddress?.toLowerCase().includes(userSearchTerm.toLowerCase())
   );
@@ -283,15 +335,15 @@ export default function Admin() {
       username: formData.get('username') as string,
     };
 
-    updateUserMutation.mutate({ userId: selectedUser.id, userData });
+    updateUserMutation.mutate({ userId: selectedUser!.id, userData });
   };
 
-  const handleViewUserDetails = (user: any) => {
+  const handleViewUserDetails = (user: UserData) => {
     setSelectedUser(user);
     setIsUserDetailsOpen(true);
   };
 
-  const handleEditUserClick = (user: any) => {
+  const handleEditUserClick = (user: UserData) => {
     setSelectedUser(user);
     setIsEditUserOpen(true);
   };
