@@ -1,30 +1,74 @@
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import MemoryStore from "memorystore";
+import { createClient } from 'redis';
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
+
+// Configure proxy trust for production deployments
+app.set('trust proxy', 1);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Session configuration for guest authentication (in-memory for dev)
-const MemoryStoreSession = MemoryStore(session);
+// Session storage configuration - production-safe
+async function createSessionStore() {
+  if (process.env.NODE_ENV === 'production') {
+    // Production: Require Redis for durable sessions
+    if (!process.env.REDIS_URL && !process.env.REDIS_HOST) {
+      throw new Error('REDIS_URL or REDIS_HOST required for production session storage');
+    }
+    
+    const connectRedis = (await import('connect-redis')).default;
+    const RedisStore = connectRedis(session);
+    
+    const redisClient = createClient({
+      url: process.env.REDIS_URL || `redis://${process.env.REDIS_HOST || 'localhost'}:${process.env.REDIS_PORT || 6379}`
+    });
+    
+    await redisClient.connect();
+    log('Connected to Redis for session storage');
+    
+    return new RedisStore({
+      client: redisClient,
+      prefix: 'gala_session:',
+      ttl: 2 * 60 * 60, // 2 hours in seconds
+    });
+  } else {
+    // Development: Use memory store
+    const MemoryStoreSession = MemoryStore(session);
+    return new MemoryStoreSession({
+      checkPeriod: 86400000 // prune expired entries every 24h
+    });
+  }
+}
 
-app.use(session({
-  store: new MemoryStoreSession({
-    checkPeriod: 86400000 // prune expired entries every 24h
-  }),
-  secret: process.env.SESSION_SECRET || 'gala-prediction-market-dev-secret',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: false, // Set to true in production with HTTPS
-    httpOnly: true,
-    sameSite: 'strict', // Enhanced CSRF protection for admin functions
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-  },
-}));
+// Require SESSION_SECRET in production
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  throw new Error('SESSION_SECRET environment variable is required in production');
+}
+
+// Configure session middleware after async initialization
+async function setupSessions(app: express.Application) {
+  const sessionStore = await createSessionStore();
+  
+  app.use(session({
+    store: sessionStore,
+    secret: process.env.SESSION_SECRET || 'gala-prediction-market-dev-secret-only',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV === 'production', // HTTPS-only in production
+      httpOnly: true, // Prevent XSS access to cookies
+      sameSite: 'strict', // CSRF protection
+      maxAge: 2 * 60 * 60 * 1000, // 2 hours (secure for financial app)
+    },
+    name: 'sessionId', // Custom session name
+    proxy: true, // Trust proxy headers in production
+  }));
+}
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -57,6 +101,9 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Setup session storage before registering routes
+  await setupSessions(app);
+  
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

@@ -139,21 +139,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { username } = req.body;
       
-      // Create guest user with minimal balance for testing
-      const userData = {
-        username: username || `Guest${Date.now()}`,
-        walletAddress: `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-      };
-      
-      const user = await storage.createUser(userData);
-      
-      // Initialize with small test balance (100 USDC instead of 1000)
-      await storage.updateUserBalance(user.id, '100');
-      
-      // Set session
-      req.session.userId = user.id;
-      
-      res.json({ user, message: "Guest session created with test balance" });
+      // Regenerate session to prevent fixation attacks
+      req.session.regenerate((err) => {
+        if (err) {
+          return res.status(500).json({ error: "Session regeneration failed" });
+        }
+        
+        // Create guest user with minimal balance for testing
+        const userData = {
+          username: username || `Guest${Date.now()}`,
+          walletAddress: `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+        };
+        
+        storage.createUser(userData).then(async (user) => {
+          // Initialize with small test balance (100 USDC)
+          await storage.updateUserBalance(user.id, '100');
+          
+          // Set session after regeneration
+          req.session.userId = user.id;
+          req.session.save((saveErr) => {
+            if (saveErr) {
+              return res.status(500).json({ error: "Session save failed" });
+            }
+            res.json({ user, message: "Guest session created with test balance" });
+          });
+        }).catch(() => {
+          res.status(500).json({ error: "Failed to create guest user" });
+        });
+      });
     } catch (error) {
       res.status(500).json({ error: "Failed to create guest session" });
     }
@@ -178,23 +191,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/auth/logout", async (req, res) => {
+    // Clear session data before destroying
+    req.session.userId = undefined;
+    req.session.isAdmin = undefined;
+    
     req.session.destroy((err) => {
       if (err) {
         return res.status(500).json({ error: "Failed to logout" });
       }
+      
+      // Clear the cookie on client side  
+      res.clearCookie('sessionId', { 
+        path: '/', 
+        secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        sameSite: 'strict'
+      });
+      
       res.json({ message: "Logged out successfully" });
     });
   });
 
-  // Admin toggle endpoint for demo/testing
+  // Admin toggle endpoint - RESTRICTED to development only  
   app.post("/api/auth/admin-toggle", requireAuth, async (req, res) => {
     try {
+      // CRITICAL SECURITY: Only allow in development mode
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(403).json({ 
+          error: "Admin toggle disabled in production for security" 
+        });
+      }
+      
       const { enable } = req.body;
-      req.session.isAdmin = !!enable;
-      res.json({ 
-        success: true, 
-        isAdmin: req.session.isAdmin,
-        message: `Admin access ${req.session.isAdmin ? 'enabled' : 'disabled'}` 
+      
+      // Preserve userId before regeneration
+      const prevUserId = req.session.userId;
+      
+      // Regenerate session when changing privileges (security best practice)
+      req.session.regenerate((err) => {
+        if (err) {
+          return res.status(500).json({ error: "Session regeneration failed" });
+        }
+        
+        // Restore identity and set admin flag in new session
+        req.session.userId = prevUserId;
+        req.session.isAdmin = !!enable;
+        
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            return res.status(500).json({ error: "Session save failed" });
+          }
+          
+          res.json({ 
+            success: true, 
+            isAdmin: req.session.isAdmin,
+            message: `Admin access ${req.session.isAdmin ? 'enabled' : 'disabled'} (DEV MODE ONLY)`
+          });
+        });
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to toggle admin access" });
